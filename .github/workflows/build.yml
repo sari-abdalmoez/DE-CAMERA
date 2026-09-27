@@ -33,7 +33,7 @@ jobs:
 
       - name: Install Android SDK
         run: |
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses
           sdkmanager \
             "platform-tools" \
             "platforms;android-36" \
@@ -45,7 +45,6 @@ jobs:
         run: |
           java -version
           gradle --version
-          adb --version
           cmake --version
 
       - name: Build DE CAMERA
