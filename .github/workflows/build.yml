@@ -1,9 +1,7 @@
-name: Build Android APK
+name: Build Android C++ APK
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
@@ -12,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Set up JDK 17
@@ -21,37 +19,63 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Generate Configs safely
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Accept Licenses and Install NDK/CMake
       run: |
-        echo "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }" > settings.gradle
-        echo "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" >> settings.gradle
-        echo 'rootProject.name = "DE-CAMERA"' >> settings.gradle
-        echo "include ':app'" >> settings.gradle
-
-        echo "plugins { id 'com.android.application' version '8.2.0' apply false }" > build.gradle
-
-        mkdir -p app
-        echo "plugins { id 'com.android.application' }" > app/build.gradle
-        echo "android {" >> app/build.gradle
-        echo "    namespace 'com.decamera.android'" >> app/build.gradle
-        echo "    compileSdk 34" >> app/build.gradle
-        echo "    defaultConfig { applicationId 'com.decamera.android'; minSdk 26; targetSdk 34; versionCode 1; versionName '1.0' }" >> app/build.gradle
-        echo "    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }" >> app/build.gradle
-        echo "}" >> app/build.gradle
-
-        mkdir -p app/src/main
-        echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.CAMERA"/><application android:label="DE-CAMERA"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>' > app/src/main/AndroidManifest.xml
+        yes | sdkmanager --licenses || true
+        sdkmanager --install "ndk;25.1.8937393" "cmake;3.22.1"
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.2'
 
-    - name: Build APK
-      run: gradle assembleDebug
+    - name: Generate Missing Gradle Files and Wrapper
+      run: |
+        # 1. إنشاء ملف settings.gradle إذا لم يكن موجوداً
+        if [ ! -f "settings.gradle" ]; then
+          echo "Creating settings.gradle..."
+          cat > settings.gradle << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "DE-CAMERA"
+        include ':app'
+        EOF
+        fi
 
-    - name: Upload APK Artifact
+        # 2. إنشاء ملف build.gradle الرئيسي إذا لم يكن موجوداً
+        if [ ! -f "build.gradle" ]; then
+          echo "Creating root build.gradle..."
+          cat > build.gradle << 'EOF'
+        plugins {
+            id 'com.android.application' version '8.2.0' apply false
+            id 'com.android.library' version '8.2.0' apply false
+        }
+        EOF
+        fi
+
+        # 3. توليد الـ Gradle Wrapper بإصدار متوافق مع AGP 8.2.0
+        echo "Generating Gradle Wrapper..."
+        gradle wrapper --gradle-version 8.2
+        chmod +x gradlew
+
+    - name: Build APK with NDK
+      run: ./gradlew assembleDebug
+
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: DE-CAMERA-APK
+        name: app-debug-apk
         path: app/build/outputs/apk/debug/app-debug.apk
