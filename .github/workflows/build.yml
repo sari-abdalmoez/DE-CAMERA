@@ -20,13 +20,120 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Create Missing Gradle Root Files
+    - name: Generate Complete Android Project Structure & Configs
       run: |
-        if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-          echo "include ':app'" > settings.gradle
+        # 1. إنشاء ملف settings.gradle مع تحديد مستودعات الإضافات الرسمية
+        cat << 'EOF' > settings.gradle
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "DE-CAMERA"
+        include ':app'
+        EOF
+
+        # 2. إنشاء ملف build.gradle الرئيسي
+        cat << 'EOF' > build.gradle
+        plugins {
+            id 'com.android.application' version '8.2.0' apply false
+        }
+        EOF
+
+        # 3. إنشاء ملف إعدادات تطبيق الأندرويد app/build.gradle
+        mkdir -p app
+        cat << 'EOF' > app/build.gradle
+        plugins {
+            id 'com.android.application'
+        }
+
+        android {
+            namespace 'com.decamera.android'
+            compileSdk 34
+
+            defaultConfig {
+                applicationId "com.decamera.android"
+                minSdk 26
+                targetSdk 34
+                versionCode 1
+                versionName "1.0"
+                externalNativeBuild {
+                    cmake { cppFlags "" }
+                }
+            }
+
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+
+            externalNativeBuild {
+                cmake {
+                    path file('src/main/cpp/CMakeLists.txt')
+                    version '3.22.1'
+                }
+            }
+        }
+        EOF
+
+        # 4. إنشاء ملف AndroidManifest.xml إذا لم يكن موجوداً
+        mkdir -p app/src/main
+        if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+            cat << 'EOF' > app/src/main/AndroidManifest.xml
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                <uses-permission android:name="android.permission.CAMERA" />
+                <uses-permission android:name="android.permission.RECORD_AUDIO" />
+                <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+                <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+                <application
+                    android:allowBackup="true"
+                    android:label="DE-CAMERA"
+                    android:supportsRtl="true"
+                    android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                    <activity
+                        android:name=".DEActivity"
+                        android:exported="true">
+                        <intent-filter>
+                            <action android:name="android.intent.action.MAIN" />
+                            <category android:name="android.intent.category.LAUNCHER" />
+                        </intent-filter>
+                    </activity>
+                </application>
+            </manifest>
+            EOF
         fi
-        if [ ! -f "build.gradle" ] && [ ! -f "build.gradle.kts" ]; then
-          echo "plugins { id 'com.android.application' version '8.2.0' apply false }" > build.gradle
+
+        # 5. إنشاء ملف CMakeLists.txt لربط ملفات C++ إذا لم يكن موجوداً
+        mkdir -p app/src/main/cpp
+        if [ ! -f "app/src/main/cpp/CMakeLists.txt" ]; then
+            cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
+            cmake_minimum_required(VERSION 3.22.1)
+            project(decamera)
+            add_library(decamera SHARED
+                main.cpp
+                core/App.cpp
+                gpu/GLESRenderer.cpp
+                ui/UIManager.cpp
+                video/VideoEngine.cpp
+                storage/JniBridge.cpp
+            )
+            target_link_libraries(decamera
+                android
+                EGL
+                GLESv2
+                mediandk
+                log
+            )
+            EOF
         fi
 
     - name: Generate Gradle Wrapper
