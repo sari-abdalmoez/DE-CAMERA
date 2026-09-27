@@ -21,82 +21,33 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Auto-Generate Project Structure & Configs
+    - name: Generate Configs safely
       run: |
-        # 1. إنشاء ملف إعدادات المستودع الرئيسي مع مستودعات Google
-        cat << 'EOF' > settings.gradle
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
-        rootProject.name = "DE-CAMERA"
-        include ':app'
-        EOF
+        echo "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }" > settings.gradle
+        echo "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" >> settings.gradle
+        echo 'rootProject.name = "DE-CAMERA"' >> settings.gradle
+        echo "include ':app'" >> settings.gradle
 
-        # 2. إنشاء ملف بناء المشروع الرئيسي متوافق مع AGP 8.2.0
-        cat << 'EOF' > build.gradle
-        plugins {
-            id 'com.android.application' version '8.2.0' apply false
-        }
-        EOF
+        echo "plugins { id 'com.android.application' version '8.2.0' apply false }" > build.gradle
 
-        # 3. إنشاء إعدادات تطبيق الأندرويد الداخلي
         mkdir -p app
-        cat << 'EOF' > app/build.gradle
-        plugins {
-            id 'com.android.application'
-        }
-        android {
-            namespace 'com.decamera.android'
-            compileSdk 34
-            defaultConfig {
-                applicationId "com.decamera.android"
-                minSdk 26
-                targetSdk 34
-                versionCode 1
-                versionName "1.0"
-            }
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_17
-                targetCompatibility JavaVersion.VERSION_17
-            }
-        }
-        EOF
+        echo "plugins { id 'com.android.application' }" > app/build.gradle
+        echo "android {" >> app/build.gradle
+        echo "    namespace 'com.decamera.android'" >> app/build.gradle
+        echo "    compileSdk 34" >> app/build.gradle
+        echo "    defaultConfig { applicationId 'com.decamera.android'; minSdk 26; targetSdk 34; versionCode 1; versionName '1.0' }" >> app/build.gradle
+        echo "    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }" >> app/build.gradle
+        echo "}" >> app/build.gradle
 
-        # 4. إنشاء ملف الواجهة الأساسي AndroidManifest
         mkdir -p app/src/main
-        if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
-            cat << 'EOF' > app/src/main/AndroidManifest.xml
-            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-                <uses-permission android:name="android.permission.CAMERA" />
-                <application android:label="DE-CAMERA">
-                    <activity android:name=".MainActivity" android:exported="true">
-                        <intent-filter>
-                            <action android:name="intent.action.MAIN" />
-                            <category android:name="android.intent.category.LAUNCHER" />
-                        </intent-filter>
-                    </activity>
-                </application>
-            </manifest>
-            EOF
-        fi
+        echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.CAMERA"/><application android:label="DE-CAMERA"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>' > app/src/main/AndroidManifest.xml
 
-    - name: Setup Gradle (Compatible v8.2)
+    - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.2'
 
-    - name: Build APK Directly
+    - name: Build APK
       run: gradle assembleDebug
 
     - name: Upload APK Artifact
