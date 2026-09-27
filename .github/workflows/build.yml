@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Gradle 8.13
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
@@ -31,23 +31,24 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;35.0.0" \
-            "ndk;29.0.14206865" \
-            "cmake;3.22.1"
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
 
-      - name: Check Toolchain
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          sdkmanager "build-tools;35.0.0"
+          sdkmanager "ndk;29.0.14206865"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Check tools
         run: |
           java -version
           gradle --version
           cmake --version
 
-      - name: Build DE CAMERA
+      - name: Build APK
         run: |
           gradle :app:assembleDebug \
             --no-daemon \
