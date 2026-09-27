@@ -19,12 +19,17 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Accept Licenses and Install NDK/CMake
+    # الخطوة الجديدة: تثبيت NDK و CMake يدوياً بدون استخدام الأداة التي تسبب الخطأ
+    - name: Install NDK and CMake
       run: |
+        export ANDROID_HOME=/usr/local/lib/android/sdk
+        export ANDROID_SDK_ROOT=$ANDROID_HOME
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+        
+        # قبول التراخيص
         yes | sdkmanager --licenses || true
+        
+        # تثبيت NDK و CMake المطلوبين لمشروع C++
         sdkmanager --install "ndk;25.1.8937393" "cmake;3.22.1"
 
     - name: Setup Gradle
@@ -66,7 +71,7 @@ jobs:
         EOF
         fi
 
-        # 3. توليد الـ Gradle Wrapper بإصدار متوافق مع AGP 8.2.0
+        # 3. توليد الـ Gradle Wrapper بإصدار متوافق
         echo "Generating Gradle Wrapper..."
         gradle wrapper --gradle-version 8.2
         chmod +x gradlew
