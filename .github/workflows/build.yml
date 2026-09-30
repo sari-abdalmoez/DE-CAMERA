@@ -22,16 +22,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
-      # =========================================================
-      # CHECKOUT
-      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =========================================================
-      # JAVA 17
-      # =========================================================
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
@@ -39,9 +32,6 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # =========================================================
-      # ANDROID SDK
-      # =========================================================
       - name: Setup Android SDK
         shell: bash
         run: |
@@ -81,9 +71,6 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      # =========================================================
-      # RUST
-      # =========================================================
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.82.0
         with:
@@ -91,238 +78,8 @@ jobs:
             aarch64-linux-android
             armv7-linux-androideabi
 
-      # تأمين إضافي: ضمان تثبيت الـ targets (يحل خطأ typenum/libc)
-      - name: Ensure Android Rust targets installed
-        shell: bash
-        run: |
-          rustup target add aarch64-linux-android armv7-linux-androideabi
-          echo "Installed targets:"
-          rustup target list --installed
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            native/rust
-
-      - name: Install cargo-ndk
-        shell: bash
-        run: |
-          cargo install cargo-ndk --version 3.5.4 --locked
-
-      - name: Verify toolchain
-        shell: bash
-        run: |
-          set -e
-          java -version
-          rustc --version
-          cargo --version
-          cargo ndk --version
-          cmake --version
-          echo ""
-          echo "NDK:"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
-
-      # =========================================================
-      # GRADLE
-      # =========================================================
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Verify Gradle
-        run: ./gradlew --version
-
-      # =========================================================
-      # RUST TESTS  (المسار الصحيح: native/rust)
-      # =========================================================
-      - name: Run Rust tests
-        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
-        working-directory: native/rust
-        run: |
-          cargo test --all --verbose
-
-      # =========================================================
-      # BUILD RUST CORE  (المسار الصحيح + مكتبة ثابتة .a)
-      # =========================================================
-      - name: Build Rust core
-        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
-        working-directory: native/rust
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p ../../app/src/main/jniLibs/arm64-v8a \
-                   ../../app/src/main/jniLibs/armeabi-v7a
-
-          cargo ndk \
-            -t arm64-v8a \
-            -t armeabi-v7a \
-            -o ../../app/src/main/jniLibs \
-            build --release
-
-          # ضمان وصول المكتبة الثابتة للمكان الذي يطلبه CMakeLists.txt
-          cp -f target/aarch64-linux-android/release/libsari_rust.a \
-                ../../app/src/main/jniLibs/arm64-v8a/
-          cp -f target/armv7-linux-androideabi/release/libsari_rust.a \
-                ../../app/src/main/jniLibs/armeabi-v7a/
-
-          echo "Contents of jniLibs:"
-          find ../../app/src/main/jniLibs -type f -print
-
-      # =========================================================
-      # VERIFY RUST LIBS FOR CMAKE
-      # =========================================================
-      - name: Verify Rust static libs
-        shell: bash
-        run: |
-          set -e
-          test -f app/src/main/jniLibs/arm64-v8a/libsari_rust.a
-          test -f app/src/main/jniLibs/armeabi-v7a/libsari_rust.a
-          echo "OK: libsari_rust.a present for both ABIs."
-
-      # =========================================================
-      # BUILD APK
-      # =========================================================
-      - name: Build Debug APK
-        shell: bash
-        run: |
-          set -e
-          ./gradlew \
-            :app:assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-      # =========================================================
-      # VERIFY APK
-      # =========================================================
-      - name: Verify APK
-        shell: bash
-        run: |
-          set -e
-          echo "Generated APK files:"
-          find app/build/outputs -type f -name "*.apk" -print
-
-          APK="$(find app/build/outputs/apk/debug \
-            -type f -name "*.apk" | head -n 1)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APKالتشخيص الذي وجدته **غير دقيق**، وإليك السبب التقني:
-
-خطأ `could not compile typenum/libc` لا يعني أن الـ Target مفقود. لو كان الـ Target مفقوداً لكانت رسالة الخطأ صريحة جداً: `target 'aarch64-linux-android' is not installed`.
-الخطأ الذي ظهر لك هو **فشل في الترجمة (Compilation Failure)**، وغالباً سببه أحد أمرين:
-1.  تعارض بين إصدار `rust-toolchain` وإصدار الـ NDK.
-2.  مشكلة في الكاش (Cache) الفاسد من محاولة بناء سابقة فاشلة.
-
-### ⚠️ تحذير هام بخصوص الملف الذي أرسلته
-الملف الذي أرفقته في رسالتك **يحتوي على إعدادات خاطئة لمشروعك** وسيؤدي لفشل البناء مجدداً لأنه:
--   يستخدم `ubuntu-latest` (وهو حالياً Ubuntu 24.04 الذي يسبب مشاكل مع Android SDK).
--   يستخدم `android-actions/setup-android@v3` (الذي فشل معك سابقاً).
--   يشير لمجلد `./native-core` بينما مشروعك يستخدم مجلد `rust/`.
--   يستخدم NDK إصدار `26.x` بينما مشروعك يتطلب `27.2.x`.
-
----
-
-### ✅ الحل الصحيح والمضمون
-نحن نحتاج فقط لإضافة خطوة تثبيت الـ Target **وتنظيف الكاش** داخل الملف الذي أعطيناك إياه سابقاً (والذي تم ضبطه خصيصاً لمسارات مشروعك وإصداراتك).
-
-استخدم هذا الكود الكامل (هو نفس الملف السابق تماماً + إضافة خطوة تثبيت الـ Target + تنظيف كاش Rust لمنع أخطاء `typenum/libc`):
-
-```yaml
-name: Build SARI Camera
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-env:
-  JAVA_VERSION: "17"
-  ANDROID_API: "35"
-  BUILD_TOOLS: "35.0.0"
-  NDK_VERSION: "27.2.12479018"
-  CMAKE_VERSION: "3.22.1"
-
-jobs:
-  build:
-    name: Build SARI Camera APK
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # =========================================================
-      # JAVA 17
-      # =========================================================
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-
-      # =========================================================
-      # ANDROID SDK (تثبيت يدوي لتجنب مشاكل ubuntu-24)
-      # =========================================================
-      - name: Setup Android SDK
-        shell: bash
-        run: |
-          set -e
-          mkdir -p $ANDROID_HOME/cmdline-tools/latest
-          CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-          TMPFILE=$(mktemp)
-          curl -fsSL "$CMDLINE_TOOLS_URL" -o "$TMPFILE"
-          unzip -q "$TMPFILE" -d $ANDROID_HOME/cmdline-tools/latest
-          rm "$TMPFILE"
-          mv $ANDROID_HOME/cmdline-tools/latest/cmdline-tools/* \
-             $ANDROID_HOME/cmdline-tools/latest/ 2>/dev/null || true
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}" \
-            "ndk;${NDK_VERSION}" \
-            "cmake;${CMAKE_VERSION}"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-
-      - name: Verify Android SDK
-        shell: bash
-        run: |
-          set -e
-          test -d "$ANDROID_HOME/platform-tools"
-          test -d "$ANDROID_HOME/platforms/android-${ANDROID_API}"
-          test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
-          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
-          test -d "$ANDROID_HOME/cmake/${CMAKE_VERSION}"
-          echo "Android SDK components verified successfully."
-
-      - name: Configure NDK
-        shell: bash
-        run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-
-      # =========================================================
-      # RUST
-      # =========================================================
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.82.0
-        with:
-          targets: |
-            aarch64-linux-android
-            armv7-linux-androideabi
-
-      # ✨ خطوة جديدة: التأكد من تثبيت الـ Target وتنظيف الكاش الفاسد
-      - name: Ensure Rust targets and clean cache
-        run: |
-          rustup target add aarch64-linux-android armv7-linux-androideabi
-          cargo clean
+      - name: Ensure Rust targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi
 
       - name: Rust cache
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
@@ -331,10 +88,14 @@ jobs:
           workspaces: |
             rust
 
+      - name: Clean Rust cache
+        if: ${{ hashFiles('rust/Cargo.toml') != '' }}
+        working-directory: rust
+        run: cargo clean
+
       - name: Install cargo-ndk
         shell: bash
-        run: |
-          cargo install cargo-ndk --version 3.5.4 --locked
+        run: cargo install cargo-ndk --version 3.5.4 --locked
 
       - name: Verify toolchain
         shell: bash
@@ -345,27 +106,19 @@ jobs:
           cargo --version
           cargo ndk --version
           cmake --version
-          echo ""
           echo "NDK:"
           "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
 
-      # =========================================================
-      # GRADLE
-      # =========================================================
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
       - name: Verify Gradle
         run: ./gradlew --version
 
-      # =========================================================
-      # RUST TESTS + BUILD
-      # =========================================================
       - name: Run Rust tests
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
         working-directory: rust
-        run: |
-          cargo test --all --verbose
+        run: cargo test --all --verbose
 
       - name: Build Rust core
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
@@ -380,9 +133,6 @@ jobs:
             -o ../app/src/main/jniLibs \
             build --release
 
-      # =========================================================
-      # BUILD APK
-      # =========================================================
       - name: Build Debug APK
         shell: bash
         run: |
