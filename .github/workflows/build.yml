@@ -27,14 +27,63 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # =========================================================
-      # CHECKOUT
-      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
       # =========================================================
-      # JAVA 17 (مطابق لـ compileOptions VERSION_17)
+      # (1) تشخيص: اطبع محتوى ملفات Gradle في اللوغ
+      # =========================================================
+      - name: Diagnose gradle files
+        shell: bash
+        run: |
+          echo "===== ROOT build.gradle.kts ====="
+          cat build.gradle.kts 2>/dev/null || echo "(missing)"
+          echo ""
+          echo "===== APP build.gradle.kts ====="
+          cat app/build.gradle.kts 2>/dev/null || echo "(missing)"
+          echo ""
+          echo "===== settings.gradle.kts ====="
+          cat settings.gradle.kts 2>/dev/null || echo "(missing)"
+          echo ""
+          echo "===== tracked top-level entries ====="
+          git ls-files | sed 's#/.*##' | sort -u
+
+      # =========================================================
+      # (2) إصلاح تلقائي: احذف compileOptions/kotlinOptions
+      #     من ملف الجذر (مكانها خاطئ هناك) دون المساس بـ plugins
+      # =========================================================
+      - name: Auto-fix root build.gradle.kts
+        shell: bash
+        run: |
+          python3 << 'PYEOF'
+          import os
+          p = "build.gradle.kts"
+          if not os.path.exists(p):
+              print("No root build.gradle.kts"); raise SystemExit(0)
+          lines = open(p).read().splitlines(keepends=True)
+          out = []
+          skip = False
+          depth = 0
+          targets = ("compileOptions", "kotlinOptions")
+          for ln in lines:
+              s = ln.lstrip()
+              if not skip:
+                  if s.startswith(targets):
+                      skip = True
+                      depth = ln.count("{") - ln.count("}")
+                      continue
+                  out.append(ln)
+              else:
+                  depth += ln.count("{") - ln.count("}")
+                  if depth <= 0:
+                      skip = False
+                      depth = 0
+          open(p, "w").write("".join(out))
+          print("Cleaned root build.gradle.kts (removed misplaced blocks).")
+          PYEOF
+
+      # =========================================================
+      # JAVA 17 (يطابق compileOptions VERSION_17)
       # =========================================================
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -77,7 +126,7 @@ jobs:
           test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
           test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
           test -d "$ANDROID_HOME/cmake/${CMAKE_VERSION}"
-          echo "Android SDK components verified successfully."
+          echo "Android SDK verified."
 
       - name: Configure NDK
         shell: bash
@@ -86,7 +135,7 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       # =========================================================
-      # RUST (متوافق مع rustc 1.82 + cargo-ndk 3.5.4)
+      # RUST
       # =========================================================
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.82.0
@@ -118,8 +167,6 @@ jobs:
           cargo --version
           cargo ndk --version
           cmake --version
-          echo "NDK:"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
 
       # =========================================================
       # GRADLE + BUILD
