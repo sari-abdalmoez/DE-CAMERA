@@ -1,45 +1,14 @@
 cmake_minimum_required(VERSION 3.22.1)
-
-project("decamera")
-
+project(sari_camera LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-add_library(
-    decamera
-    SHARED
-    main.cpp
-    android/JniBridge.cpp
-    gpu/GLESRenderer.cpp
-    video/VideoEngine.cpp
-)
-
-target_include_directories(
-    decamera
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-find_library(
-    log-lib
-    log
-)
-
-find_library(
-    android-lib
-    android
-)
-
-find_library(
-    jnigraphics-lib
-    jnigraphics
-)
-
-target_link_libraries(
-    decamera
-    ${log-lib}
-    ${android-lib}
-    ${jnigraphics-lib}
-    EGL
-    GLESv2
-)
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffunction-sections -fdata-sections")
+set(RUST_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${CMAKE_ANDROID_ARCH_ABI}/libsari_rust.a")
+if(NOT EXISTS "${RUST_LIB}")
+    message(FATAL_ERROR "Rust static library missing: ${RUST_LIB}. Run cargo ndk before CMake.")
+endif()
+add_library(sari_camera SHARED native_bridge.cpp)
+add_library(sari_rust STATIC IMPORTED)
+set_target_properties(sari_rust PROPERTIES IMPORTED_LOCATION "${RUST_LIB}")
+target_compile_options(sari_camera PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(sari_camera sari_rust log android dl m)

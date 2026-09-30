@@ -1,0 +1,43 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#050608">
+
+    <TextureView android:id="@+id/preview" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <View android:layout_width="match_parent" android:layout_height="match_parent" android:background="#22000000" />
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="18dp" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/brand" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="SARI CAMERA" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:letterSpacing="0.12" />
+        <TextView android:id="@+id/capability" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Detecting camera…" android:textColor="#D7D9DE" android:textSize="11sp" />
+        <Switch android:id="@+id/rawToggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="RAW" android:textColor="#FFFFFF" android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal|top" android:layout_marginTop="74dp" android:text="Ready" android:textColor="#FFFFFF" android:textSize="13sp" android:background="#66000000" android:padding="8dp" />
+
+    <LinearLayout android:id="@+id/proPanel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom" android:layout_marginBottom="190dp" android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:padding="12dp" android:orientation="vertical" android:background="#D90A0C10" android:visibility="gone">
+        <TextView android:id="@+id/isoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ISO" android:textColor="#FFFFFF" />
+        <SeekBar android:id="@+id/isoSeek" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
+        <TextView android:id="@+id/exposureValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Shutter" android:textColor="#FFFFFF" />
+        <SeekBar android:id="@+id/exposureSeek" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
+        <TextView android:id="@+id/focusValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Focus" android:textColor="#FFFFFF" />
+        <SeekBar android:id="@+id/focusSeek" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
+        <TextView android:id="@+id/wbValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="WB 5000K" android:textColor="#FFFFFF" />
+        <SeekBar android:id="@+id/wbSeek" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
+    </LinearLayout>
+
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom" android:layout_marginBottom="112dp" android:scrollbars="none">
+        <LinearLayout android:id="@+id/modes" android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center" android:paddingStart="14dp" android:paddingEnd="14dp">
+            <TextView android:id="@+id/photoMode" style="@style/ModeButton" android:text="PHOTO" />
+            <TextView android:id="@+id/nightMode" style="@style/ModeButton" android:text="NIGHT" />
+            <TextView android:id="@+id/astroMode" style="@style/ModeButton" android:text="ASTRO" />
+            <TextView android:id="@+id/proMode" style="@style/ModeButton" android:text="PRO" />
+            <TextView android:id="@+id/videoMode" style="@style/ModeButton" android:text="VIDEO" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="96dp" android:layout_gravity="bottom" android:gravity="center_vertical" android:paddingStart="18dp" android:paddingEnd="18dp" android:background="#E6050608">
+        <ImageButton android:id="@+id/gallery" android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/ic_gallery" android:background="@android:color/transparent" android:contentDescription="Gallery" />
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <ImageButton android:id="@+id/shutter" android:layout_width="78dp" android:layout_height="78dp" android:src="@drawable/ic_shutter" android:background="@android:color/transparent" android:contentDescription="Capture" />
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <ImageButton android:id="@+id/switchCamera" android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/ic_switch" android:background="@android:color/transparent" android:contentDescription="Switch camera" />
+    </LinearLayout>
+</FrameLayout>
