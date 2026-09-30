@@ -32,7 +32,7 @@ jobs:
 
 
       # =========================================================
-      # JAVA
+      # JAVA 17
       # =========================================================
 
       - name: Setup JDK 17
@@ -40,6 +40,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
 
       # =========================================================
@@ -48,13 +49,42 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-            ndk;27.2.12479018
-            cmake;3.22.1
+
+
+      # =========================================================
+      # INSTALL ANDROID COMPONENTS
+      # =========================================================
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              | head -n 1)"
+          fi
+
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found."
+            exit 1
+          fi
+
+          echo "Using sdkmanager:"
+          echo "$SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
 
 
       # =========================================================
@@ -69,12 +99,14 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          test -d "$ANDROID_SDK_ROOT/platforms/android-35"
-          test -d "$ANDROID_SDK_ROOT/build-tools/35.0.0"
-          test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
-          test -d "$ANDROID_SDK_ROOT/cmake/3.22.1"
+          test -d "$ANDROID_SDK_ROOT/platform-tools"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-${ANDROID_API}"
+          test -d "$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
+          test -d "$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
+          test -d "$ANDROID_SDK_ROOT/cmake/${CMAKE_VERSION}"
 
-          echo "Android SDK verification successful."
+          echo ""
+          echo "Android SDK components verified successfully."
 
 
       # =========================================================
@@ -84,8 +116,8 @@ jobs:
       - name: Configure NDK
         shell: bash
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
 
       # =========================================================
@@ -128,11 +160,16 @@ jobs:
       - name: Verify toolchain
         shell: bash
         run: |
+          set -e
+
           java -version
           rustc --version
           cargo --version
           cargo ndk --version
           cmake --version
+
+          echo ""
+          echo "NDK:"
           "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
 
 
@@ -144,7 +181,7 @@ jobs:
         run: chmod +x ./gradlew
 
 
-      - name: Gradle version
+      - name: Verify Gradle
         run: ./gradlew --version
 
 
@@ -152,7 +189,7 @@ jobs:
       # RUST TESTS
       # =========================================================
 
-      - name: Test Rust core
+      - name: Run Rust tests
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
         working-directory: rust
         run: |
@@ -160,7 +197,7 @@ jobs:
 
 
       # =========================================================
-      # BUILD RUST
+      # BUILD RUST CORE
       # =========================================================
 
       - name: Build Rust core
@@ -180,10 +217,10 @@ jobs:
 
 
       # =========================================================
-      # BUILD ANDROID
+      # BUILD APK
       # =========================================================
 
-      - name: Build APK
+      - name: Build Debug APK
         shell: bash
         run: |
           set -e
@@ -204,22 +241,33 @@ jobs:
         run: |
           set -e
 
-          echo "Searching for APK..."
+          echo "Generated APK files:"
 
-          find app/build/outputs -type f -name "*.apk" -print
+          find app/build/outputs \
+            -type f \
+            -name "*.apk" \
+            -print
 
-          APK="$(find app/build/outputs/apk/debug -type f -name "*.apk" | head -n 1)"
+          APK="$(find app/build/outputs/apk/debug \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)"
 
           if [ -z "$APK" ]; then
+            echo ""
             echo "ERROR: APK was not generated."
             exit 1
           fi
 
           echo ""
-          echo "======================================"
+          echo "========================================"
           echo "SARI CAMERA APK GENERATED SUCCESSFULLY"
-          echo "======================================"
+          echo "========================================"
+          echo ""
+          echo "APK:"
           echo "$APK"
+          echo ""
+
           ls -lh "$APK"
 
 
