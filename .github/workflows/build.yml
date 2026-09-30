@@ -4,14 +4,13 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   JAVA_VERSION: "17"
@@ -19,205 +18,106 @@ env:
   BUILD_TOOLS: "35.0.0"
   NDK_VERSION: "27.2.12479018"
   CMAKE_VERSION: "3.22.1"
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.workers.max=2"
 
 jobs:
   build:
-    name: Build SARI Camera APK
+    name: Build Android APK
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      # =========================================================
-      # (1) تشخيص: اطبع محتوى ملفات Gradle في اللوغ
-      # =========================================================
-      - name: Diagnose gradle files
-        shell: bash
-        run: |
-          echo "===== ROOT build.gradle.kts ====="
-          cat build.gradle.kts 2>/dev/null || echo "(missing)"
-          echo ""
-          echo "===== APP build.gradle.kts ====="
-          cat app/build.gradle.kts 2>/dev/null || echo "(missing)"
-          echo ""
-          echo "===== settings.gradle.kts ====="
-          cat settings.gradle.kts 2>/dev/null || echo "(missing)"
-          echo ""
-          echo "===== tracked top-level entries ====="
-          git ls-files | sed 's#/.*##' | sort -u
-
-      # =========================================================
-      # (2) إصلاح تلقائي: احذف compileOptions/kotlinOptions
-      #     من ملف الجذر (مكانها خاطئ هناك) دون المساس بـ plugins
-      # =========================================================
-      - name: Auto-fix root build.gradle.kts
-        shell: bash
-        run: |
-          python3 << 'PYEOF'
-          import os
-          p = "build.gradle.kts"
-          if not os.path.exists(p):
-              print("No root build.gradle.kts"); raise SystemExit(0)
-          lines = open(p).read().splitlines(keepends=True)
-          out = []
-          skip = False
-          depth = 0
-          targets = ("compileOptions", "kotlinOptions")
-          for ln in lines:
-              s = ln.lstrip()
-              if not skip:
-                  if s.startswith(targets):
-                      skip = True
-                      depth = ln.count("{") - ln.count("}")
-                      continue
-                  out.append(ln)
-              else:
-                  depth += ln.count("{") - ln.count("}")
-                  if depth <= 0:
-                      skip = False
-                      depth = 0
-          open(p, "w").write("".join(out))
-          print("Cleaned root build.gradle.kts (removed misplaced blocks).")
-          PYEOF
-
-      # =========================================================
-      # JAVA 17 (يطابق compileOptions VERSION_17)
-      # =========================================================
-      - name: Setup JDK 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
 
-      # =========================================================
-      # ANDROID SDK (تثبيت يدوي موثوق)
-      # =========================================================
       - name: Setup Android SDK
-        shell: bash
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
         run: |
-          set -e
-          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
-          CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-          TMPFILE=$(mktemp)
-          curl -fsSL "$CMDLINE_TOOLS_URL" -o "$TMPFILE"
-          unzip -q "$TMPFILE" -d "$ANDROID_HOME/cmdline-tools/latest"
-          rm "$TMPFILE"
-          mv "$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_HOME/cmdline-tools/latest/" 2>/dev/null || true
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager \
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;${BUILD_TOOLS}" \
             "ndk;${NDK_VERSION}" \
             "cmake;${CMAKE_VERSION}"
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Verify Android SDK
-        shell: bash
+      - name: Configure Android environment
         run: |
-          set -e
-          test -d "$ANDROID_HOME/platform-tools"
-          test -d "$ANDROID_HOME/platforms/android-${ANDROID_API}"
-          test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
-          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
-          test -d "$ANDROID_HOME/cmake/${CMAKE_VERSION}"
-          echo "Android SDK verified."
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Configure NDK
-        shell: bash
-        run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-
-      # =========================================================
-      # RUST
-      # =========================================================
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.82.0
+        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: |
             aarch64-linux-android
             armv7-linux-androideabi
 
-      - name: Ensure Rust targets
-        run: rustup target add aarch64-linux-android armv7-linux-androideabi
-
-      - name: Rust cache
-        if: ${{ hashFiles('rust/Cargo.toml') != '' }}
+      - name: Cache Rust dependencies
+        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            rust
+          workspaces: native/rust
 
       - name: Install cargo-ndk
-        shell: bash
+        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
         run: cargo install cargo-ndk --version 3.5.4 --locked
 
-      - name: Verify toolchain
-        shell: bash
+      - name: Build Rust native libraries
+        if: ${{ hashFiles('native/rust/Cargo.toml') != '' }}
+        working-directory: native/rust
         run: |
           set -e
-          java -version
-          rustc --version
-          cargo --version
-          cargo ndk --version
-          cmake --version
+          mkdir -p ../../app/src/main/jniLibs
 
-      # =========================================================
-      # GRADLE + BUILD
-      # =========================================================
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Verify Gradle
-        run: ./gradlew --version
-
-      - name: Run Rust tests
-        if: ${{ hashFiles('rust/Cargo.toml') != '' }}
-        working-directory: rust
-        run: cargo test --all --verbose
-
-      - name: Build Rust core
-        if: ${{ hashFiles('rust/Cargo.toml') != '' }}
-        working-directory: rust
-        shell: bash
-        run: |
-          set -e
-          mkdir -p ../app/src/main/jniLibs
           cargo ndk \
             -t arm64-v8a \
             -t armeabi-v7a \
-            -o ../app/src/main/jniLibs \
+            -o ../../app/src/main/jniLibs \
             build --release
 
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Validate Gradle installation
+        run: ./gradlew --version
+
+      - name: Run unit tests
+        run: ./gradlew test --stacktrace --warning-mode all
+
       - name: Build Debug APK
-        shell: bash
         run: |
-          set -e
           ./gradlew \
             :app:assembleDebug \
-            --no-daemon \
             --stacktrace \
-            --warning-mode all
+            --warning-mode all \
+            --no-daemon
 
-      - name: Verify APK
-        shell: bash
+      - name: Verify generated APK
         run: |
           set -e
           APK="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "No APK was generated."
             exit 1
           fi
-          echo "SARI CAMERA APK GENERATED SUCCESSFULLY"
+
+          echo "APK generated successfully:"
           ls -lh "$APK"
 
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: SARI-Camera-debug
