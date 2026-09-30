@@ -19,22 +19,16 @@ env:
 jobs:
   build:
     name: Build SARI Camera APK
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04   # ← غيّر من 24.04 إلى 22.04 (أكثر استقراراً)
 
     steps:
-
-      # =========================================================
-      # CHECKOUT
-      # =========================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
-
       # =========================================================
       # JAVA 17
       # =========================================================
-
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
@@ -42,88 +36,68 @@ jobs:
           java-version: "17"
           cache: gradle
 
-
       # =========================================================
-      # ANDROID SDK
+      # ANDROID SDK - تثبيت يدوي موثوق
       # =========================================================
-
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-
-      # =========================================================
-      # INSTALL ANDROID COMPONENTS
-      # =========================================================
-
-      - name: Install Android SDK components
         shell: bash
         run: |
           set -e
 
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          # إنشاء مجلدات SDK
+          mkdir -p $ANDROID_HOME/cmdline-tools/latest
+          mkdir -p $ANDROID_HOME/platforms
+          mkdir -p $ANDROID_HOME/build-tools
+          mkdir -p $ANDROID_HOME/ndk
+          mkdir -p $ANDROID_HOME/cmake
 
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" \
-              -type f \
-              -name sdkmanager \
-              | head -n 1)"
-          fi
+          # تحميل cmdline-tools
+          CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          TMPFILE=$(mktemp)
+          curl -fsSL "$CMDLINE_TOOLS_URL" -o "$TMPFILE"
+          unzip -q "$TMPFILE" -d $ANDROID_HOME/cmdline-tools/latest
+          rm "$TMPFILE"
 
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found."
-            exit 1
-          fi
+          # نقل الملفات للمكان الصحيح
+          mv $ANDROID_HOME/cmdline-tools/latest/cmdline-tools/* \
+             $ANDROID_HOME/cmdline-tools/latest/ 2>/dev/null || true
 
-          echo "Using sdkmanager:"
-          echo "$SDKMANAGER"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          # تقبل التراخيص
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
-          "$SDKMANAGER" \
+          # تثبيت المكونات
+          sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;${BUILD_TOOLS}" \
             "ndk;${NDK_VERSION}" \
             "cmake;${CMAKE_VERSION}"
 
-
-      # =========================================================
-      # VERIFY ANDROID
-      # =========================================================
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
 
       - name: Verify Android SDK
         shell: bash
         run: |
           set -e
-
           echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          test -d "$ANDROID_SDK_ROOT/platform-tools"
-          test -d "$ANDROID_SDK_ROOT/platforms/android-${ANDROID_API}"
-          test -d "$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
-          test -d "$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
-          test -d "$ANDROID_SDK_ROOT/cmake/${CMAKE_VERSION}"
-
-          echo ""
-          echo "Android SDK components verified successfully."
-
-
-      # =========================================================
-      # NDK
-      # =========================================================
+          test -d "$ANDROID_HOME/platform-tools"
+          test -d "$ANDROID_HOME/platforms/android-${ANDROID_API}"
+          test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
+          test -d "$ANDROID_HOME/ndk/${NDK_VERSION}"
+          echo "✅ Android SDK verified"
 
       - name: Configure NDK
         shell: bash
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       # =========================================================
       # RUST
       # =========================================================
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.82.0
         with:
@@ -131,74 +105,35 @@ jobs:
             aarch64-linux-android
             armv7-linux-androideabi
 
-
-      # =========================================================
-      # RUST CACHE
-      # =========================================================
-
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             rust
 
-
-      # =========================================================
-      # CARGO NDK
-      # =========================================================
-
       - name: Install cargo-ndk
         shell: bash
-        run: |
-          cargo install cargo-ndk --version 4.1.2 --locked
-
-
-      # =========================================================
-      # VERIFY TOOLCHAIN
-      # =========================================================
+        run: cargo install cargo-ndk --version 4.1.2 --locked
 
       - name: Verify toolchain
         shell: bash
         run: |
-          set -e
-
           java -version
           rustc --version
           cargo --version
           cargo ndk --version
           cmake --version
 
-          echo ""
-          echo "NDK:"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
-
-
-      # =========================================================
-      # GRADLE
-      # =========================================================
-
       - name: Make Gradle executable
         run: chmod +x ./gradlew
-
 
       - name: Verify Gradle
         run: ./gradlew --version
 
-
-      # =========================================================
-      # RUST TESTS
-      # =========================================================
-
       - name: Run Rust tests
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
         working-directory: rust
-        run: |
-          cargo test --all --verbose
-
-
-      # =========================================================
-      # BUILD RUST CORE
-      # =========================================================
+        run: cargo test --all --verbose
 
       - name: Build Rust core
         if: ${{ hashFiles('rust/Cargo.toml') != '' }}
@@ -206,74 +141,30 @@ jobs:
         shell: bash
         run: |
           set -e
-
           mkdir -p ../app/src/main/jniLibs
-
           cargo ndk \
             -t arm64-v8a \
             -t armeabi-v7a \
             -o ../app/src/main/jniLibs \
             build --release
 
-
-      # =========================================================
-      # BUILD APK
-      # =========================================================
-
       - name: Build Debug APK
         shell: bash
         run: |
           set -e
-
-          ./gradlew \
-            :app:assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-
-      # =========================================================
-      # VERIFY APK
-      # =========================================================
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK
         shell: bash
         run: |
           set -e
-
-          echo "Generated APK files:"
-
-          find app/build/outputs \
-            -type f \
-            -name "*.apk" \
-            -print
-
-          APK="$(find app/build/outputs/apk/debug \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)"
-
+          APK="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
           if [ -z "$APK" ]; then
-            echo ""
-            echo "ERROR: APK was not generated."
+            echo "ERROR: APK not generated"
             exit 1
           fi
-
-          echo ""
-          echo "========================================"
-          echo "SARI CAMERA APK GENERATED SUCCESSFULLY"
-          echo "========================================"
-          echo ""
-          echo "APK:"
-          echo "$APK"
-          echo ""
-
+          echo "✅ APK: $APK"
           ls -lh "$APK"
-
-
-      # =========================================================
-      # UPLOAD APK
-      # =========================================================
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
