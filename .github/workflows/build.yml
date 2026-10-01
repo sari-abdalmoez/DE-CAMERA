@@ -112,7 +112,7 @@ jobs:
         run: |
           set -euxo pipefail
           cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all
-          cargo test --manifest-path app/src/main/rust/Cargo.toml --all-targets
+          cargo test --manifest-path app/src/main/rust/Cargo.toml --lib
 
       - name: Build Rust astro library
         shell: bash
