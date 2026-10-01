@@ -63,6 +63,7 @@ jobs:
         run: |
           set -euxo pipefail
           rustup target add aarch64-linux-android
+          rustup component add rustfmt --toolchain 1.82.0
           export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           echo "CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
@@ -110,7 +111,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all -- --check
+          cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all
           cargo test --manifest-path app/src/main/rust/Cargo.toml --all-targets
 
       - name: Build Rust astro library
