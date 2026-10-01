@@ -3,7 +3,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "com.sari.camera"; compileSdk = 35
     defaultConfig { applicationId = "com.sari.camera"; minSdk = 24; targetSdk = 35; versionCode = 1; versionName = "1.0.0"; ndk { abiFilters += listOf("arm64-v8a") } }
     buildFeatures { viewBinding = true }
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6"; arguments += listOf("-DANDROID_STL=c++_shared") } }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6" } }
     packaging { jniLibs { useLegacyPackaging = true; pickFirsts += listOf("lib/arm64-v8a/libc++_shared.so") } }
 }
 
