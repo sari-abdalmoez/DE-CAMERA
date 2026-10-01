@@ -167,7 +167,18 @@ class MainActivity : ComponentActivity() {
                 if (hasCameraPermission()) openCamera()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
-            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = true
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                session?.close()
+                session = null
+
+                previewSurface?.release()
+                previewSurface = null
+
+                device?.close()
+                device = null
+
+                return true
+            }
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
 
@@ -213,25 +224,53 @@ class MainActivity : ComponentActivity() {
 
     private fun loadAiAsync() {
         Thread {
+            val aiEnabled = getSharedPreferences("settings", 0)
+                .getBoolean("ai", true)
+
             try {
-                val dir = File(filesDir, "models").apply { mkdirs() }
-                copyAssetIfPresent("real_esrgan_x2.onnx", File(dir, "real_esrgan_x2.onnx"))
-                copyAssetIfPresent("deblurring_nafnet_2025may.onnx", File(dir, "deblurring_nafnet_2025may.onnx"))
-                copyAssetIfPresent("realesrgan-x4plus.param", File(dir, "realesrgan-x4plus.param"))
-                copyAssetIfPresent("realesrgan-x4plus.bin", File(dir, "realesrgan-x4plus.bin"))
-                ai.loadModels(
-                    File(dir, "real_esrgan_x2.onnx"),
-                    File(dir, "deblurring_nafnet_2025may.onnx"),
-                    File(dir, "realesrgan-x4plus.param"),
-                    File(dir, "realesrgan-x4plus.bin")
-                )
-            } catch (_: Throwable) { }
+                if (aiEnabled) {
+                    val dir = File(filesDir, "models").apply { mkdirs() }
+
+                    copyAssetIfPresent(
+                        "real_esrgan_x2.onnx",
+                        File(dir, "real_esrgan_x2.onnx")
+                    )
+
+                    copyAssetIfPresent(
+                        "deblurring_nafnet_2025may.onnx",
+                        File(dir, "deblurring_nafnet_2025may.onnx")
+                    )
+
+                    copyAssetIfPresent(
+                        "realesrgan-x4plus.param",
+                        File(dir, "realesrgan-x4plus.param")
+                    )
+
+                    copyAssetIfPresent(
+                        "realesrgan-x4plus.bin",
+                        File(dir, "realesrgan-x4plus.bin")
+                    )
+
+                    ai.loadModels(
+                        File(dir, "real_esrgan_x2.onnx"),
+                        File(dir, "deblurring_nafnet_2025may.onnx"),
+                        File(dir, "realesrgan-x4plus.param"),
+                        File(dir, "realesrgan-x4plus.bin")
+                    )
+                }
+            } catch (_: Throwable) {
+            }
+
             runOnUiThread {
-                thermalText.text = when {
-                    ai.ncnnAvailable && ai.ncnnVulkanAvailable -> "AI • VULKAN"
-                    ai.ncnnAvailable -> "AI • NCNN CPU"
-                    ai.superResolutionAvailable || ai.deblurAvailable -> "AI • ONNX"
-                    else -> "AI • FALLBACK"
+                thermalText.text = if (!aiEnabled) {
+                    "AI • OFF"
+                } else {
+                    when {
+                        ai.ncnnAvailable && ai.ncnnVulkanAvailable -> "AI • VULKAN"
+                        ai.ncnnAvailable -> "AI • NCNN CPU"
+                        ai.superResolutionAvailable || ai.deblurAvailable -> "AI • ONNX"
+                        else -> "AI • FALLBACK"
+                    }
                 }
             }
         }.start()
@@ -466,7 +505,7 @@ class MainActivity : ComponentActivity() {
         val texture = preview.surfaceTexture ?: return
         try {
             val req = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(Surface(texture))
+                addTarget(previewSurface ?: return@apply)
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(true))
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
@@ -620,7 +659,11 @@ class MainActivity : ComponentActivity() {
         burstZoom = currentZoom
         burstMode = true
         val b = controller.budget()
-        burstTotal = if (astro) b.maxFrames.coerceAtLeast(6).coerceAtMost(16) else b.maxFrames.coerceAtLeast(4).coerceAtMost(10)
+        burstTotal = if (astro) {
+            b.maxFrames.coerceIn(3, 5)
+        } else {
+            b.maxFrames.coerceIn(3, 5)
+        }
         burstRemaining = burstTotal
         astroRawSaved = false
         astroDeadline = if (astro) SystemClock.uptimeMillis() + astroDurationMs() else 0L
@@ -647,7 +690,7 @@ class MainActivity : ComponentActivity() {
                 addTarget(j.surface)
                 if (captureRaw) rawReader?.let { addTarget(it.surface) }
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(true))
+                set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(false))
                 set(CaptureRequest.CONTROL_AE_MODE, when {
                     flashMode == FLASH_AUTO && capabilitiesForCurrent().flash -> CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH
                     flashMode == FLASH_ON && capabilitiesForCurrent().flash -> CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH
@@ -698,7 +741,14 @@ class MainActivity : ComponentActivity() {
         builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
         builder.set(CaptureRequest.SENSOR_SENSITIVITY, safeIso)
         builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, safeExposure)
-        builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+
+        val minFocus =
+            c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+
+        if (minFocus > 0f) {
+            builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+        }
+
         builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
     }
 
@@ -826,7 +876,11 @@ class MainActivity : ComponentActivity() {
                 if (bitmap !== decoded) decoded.recycle()
                 val focus = if (hasFocusPoint && zoom >= 6f) focusRoi(bitmap, zoom) else null
                 val faces = FaceProtection.detect(bitmap)
-                val processor = TileProcessor(ai, controller)
+                val aiEnabled = getSharedPreferences("settings", 0)
+                    .getBoolean("ai", true)
+
+                val processor =
+                    TileProcessor(if (aiEnabled) ai else null, controller)
                 val enhanced = processor.processZoom(bitmap, zoom, focus, faces) { progress ->
                     runOnUiThread { showProcessing("Processing • $progress%", progress) }
                 }
@@ -869,10 +923,44 @@ class MainActivity : ComponentActivity() {
                 if (bitmaps.size < 2) return@execute
                 val targetW = bitmaps.minOf { it.width }
                 val targetH = bitmaps.minOf { it.height }
-                val normalized = bitmaps.map { if (it.width == targetW && it.height == targetH) it else Bitmap.createScaledBitmap(it, targetW, targetH, true) }
-                val buffers = normalized.map { bitmap ->
-                    ByteBuffer.allocateDirect(bitmap.byteCount).also { b -> bitmap.copyPixelsToBuffer(b); b.rewind() }
+
+                val normalized = mutableListOf<Bitmap>()
+
+                for (bitmap in bitmaps) {
+                    val normalizedBitmap =
+                        if (bitmap.width == targetW && bitmap.height == targetH) {
+                            bitmap
+                        } else {
+                            Bitmap.createScaledBitmap(
+                                bitmap,
+                                targetW,
+                                targetH,
+                                true
+                            ).also {
+                                if (!bitmap.isRecycled) bitmap.recycle()
+                            }
+                        }
+
+                    normalized.add(normalizedBitmap)
                 }
+
+                bitmaps.clear()
+
+                // Copy to the bounded native input buffers, then immediately release
+                // Java Bitmap instances before OpenCV creates its aligned copies.
+                val buffers = ArrayList<ByteBuffer>(normalized.size)
+
+                for (bitmap in normalized) {
+                    val buffer = ByteBuffer.allocateDirect(bitmap.byteCount)
+                    bitmap.copyPixelsToBuffer(buffer)
+                    buffer.rewind()
+                    buffers.add(buffer)
+
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+
+                normalized.clear()
+
                 val out = ByteBuffer.allocateDirect(targetW * targetH * 4)
                 val aligned = NativeEngine.alignAndStackRGBA(buffers.toTypedArray(), out, targetW, targetH, if (astro) 2.2f else 2.6f)
                 if (aligned >= 2) {
@@ -881,7 +969,12 @@ class MainActivity : ComponentActivity() {
                     result.copyPixelsFromBuffer(out)
                     val faces = FaceProtection.detect(result)
                     val focus = if (hasFocusPoint && zoom >= 6f) focusRoi(result, zoom) else null
-                    val enhanced = TileProcessor(ai, controller).processZoom(result, zoom, focus, faces) { p ->
+                    val aiEnabled = getSharedPreferences("settings", 0)
+                        .getBoolean("ai", true)
+
+                    val enhanced =
+                        TileProcessor(if (aiEnabled) ai else null, controller)
+                            .processZoom(result, zoom, focus, faces) { p ->
                         val label = when (kind) { "ZOOM" -> "ZOOM"; "ASTRO" -> "ASTRO"; else -> "NIGHT" }
                         runOnUiThread { showProcessing("$label • $p%", p) }
                     }
@@ -889,11 +982,21 @@ class MainActivity : ComponentActivity() {
                     enhanced.recycle()
                     result.recycle()
                 }
-                normalized.forEach { if (it !in bitmaps) it.recycle() }
-                bitmaps.forEach { it.recycle() }
+                buffers.forEach { it.rewind() }
             } catch (e: Throwable) {
-                bitmaps.forEach { try { it.recycle() } catch (_: Throwable) {} }
-                runOnUiThread { Toast.makeText(this, "Stack fallback: ${e.message ?: "unknown"}", Toast.LENGTH_SHORT).show() }
+                bitmaps.forEach {
+                    try {
+                        if (!it.isRecycled) it.recycle()
+                    } catch (_: Throwable) {}
+                }
+
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Stack fallback: ${e.message ?: "unknown"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             } finally {
                 files.forEach(File::delete)
                 runOnUiThread {

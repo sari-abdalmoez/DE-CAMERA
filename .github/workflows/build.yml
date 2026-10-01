@@ -178,7 +178,11 @@ jobs:
           set -euxo pipefail
           test -f app/build/outputs/apk/debug/app-debug.apk
           unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/arm64-v8a/libsari_camera.so'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/arm64-v8a/libsari_astro.so'
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/arm64-v8a/libncnn.so'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/real_esrgan_x2.onnx'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/deblurring_nafnet_2025may.onnx'
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/realesrgan-x4plus.param'
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/realesrgan-x4plus.bin'
           mkdir -p dist

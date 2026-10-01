@@ -13,7 +13,7 @@ class GalleryActivity: ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);val scroll=ScrollView(this);val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};scroll.addView(list);setContentView(scroll)
   val projection=arrayOf(MediaStore.Images.Media._ID,MediaStore.Images.Media.DISPLAY_NAME,MediaStore.Images.Media.MIME_TYPE)
   val (selection,args)=if(android.os.Build.VERSION.SDK_INT >= 29){
-   "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?" to arrayOf("Pictures/SARI Camera/%")
+   "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?" to arrayOf("Pictures/SARI Camera%")
   } else {
    "${MediaStore.Images.Media.DATA} LIKE ?" to arrayOf("%/Pictures/SARI Camera/%")
   }

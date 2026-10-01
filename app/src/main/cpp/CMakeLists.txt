@@ -38,4 +38,4 @@ else()
   target_link_libraries(sari_camera ${OpenCV_LIBS} log android sari_astro)
 endif()
 
-target_compile_options(sari_camera PRIVATE -O3 -fno-omit-frame-pointer -fexceptions -frtti -ffunction-sections -fdata-sections)
+target_compile_options(sari_camera PRIVATE -O3 -fno-omit-frame-pointer -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections)
