@@ -1,7 +1,0 @@
-.gradle/
-build/
-.idea/
-*.iml
-local.properties
-native/rust/target/
-.DS_Store

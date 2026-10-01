@@ -1,0 +1,10 @@
+# SARI Camera AI model lock
+# Both files are downloaded by CI and SHA-256 verified before packaging.
+ESRGAN_FILE=real_esrgan_x2.onnx
+ESRGAN_URL=https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/main/real_esrgan_x2.onnx?download=true
+ESRGAN_SHA256=7115ba92e8a1bfa63d68558ef006ef3d91273a068d321b1439f8bb1c9179002c
+ESRGAN_SCALE=2
+NAFNET_FILE=deblurring_nafnet_2025may.onnx
+NAFNET_URL=https://huggingface.co/opencv/deblurring_nafnet/resolve/main/deblurring_nafnet_2025may.onnx
+NAFNET_SHA256=07263f416febecce10193dd648e950b22e397cf521eedab1a114ef77b2bc9587
+NAFNET_SCALE=1

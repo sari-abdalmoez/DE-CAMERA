@@ -1,13 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.raw" android:required="false" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <application android:theme="@style/Theme.SARICamera" android:label="SARI Camera" android:allowBackup="false" android:supportsRtl="true" android:resizeableActivity="true">
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
+    <application android:theme="@style/Theme.SARICamera" android:label="SARI Camera" android:allowBackup="false" android:supportsRtl="true">
+        <activity android:name=".GalleryActivity" android:exported="false"/><activity android:name=".ViewerActivity" android:exported="false"/><activity android:name=".SettingsActivity" android:exported="false"/><activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
     </application>
 </manifest>
