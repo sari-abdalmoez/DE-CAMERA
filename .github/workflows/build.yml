@@ -85,7 +85,7 @@ jobs:
           test -f scripts/verify_ncnn_model.sh
           grep -q 'find_package(OpenCV REQUIRED' app/src/main/cpp/CMakeLists.txt
           grep -q 'SARI_HAS_NCNN' app/src/main/cpp/CMakeLists.txt
-          grep -q 'crate-type = ["cdylib"]' app/src/main/rust/Cargo.toml
+          grep -Fq 'crate-type = ["cdylib"]' app/src/main/rust/Cargo.toml
 
       - name: Download pinned OpenCV Android SDK
         env:
