@@ -102,6 +102,7 @@ jobs:
           test -d /tmp/opencv-sdk/OpenCV-android-sdk
           mv /tmp/opencv-sdk/OpenCV-android-sdk third_party/opencv
           test -f third_party/opencv/sdk/native/jni/OpenCVConfig.cmake
+          rm -f third_party/opencv/samples/gradle/wrapper/gradle-wrapper.jar
           mkdir -p app/src/main/jniLibs/arm64-v8a
           if [ -f third_party/opencv/sdk/native/3rdparty/libs/arm64-v8a/libc++_shared.so ]; then
             cp third_party/opencv/sdk/native/3rdparty/libs/arm64-v8a/libc++_shared.so app/src/main/jniLibs/arm64-v8a/
@@ -167,7 +168,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v6.0.0
         with:
           gradle-version: '8.7'
-          cache-provider: basic
 
       - name: Build and test
         run: gradle --no-daemon clean testDebugUnitTest assembleDebug --stacktrace --info
