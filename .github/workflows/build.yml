@@ -83,6 +83,7 @@ jobs:
           unzip -q /tmp/opencv.zip -d /tmp/opencv-sdk
           test -d /tmp/opencv-sdk/OpenCV-android-sdk
           mv /tmp/opencv-sdk/OpenCV-android-sdk third_party/opencv
+          rm -rf third_party/opencv/samples
           test -f third_party/opencv/sdk/native/jni/OpenCVConfig.cmake
 
       - name: Build Rust astro library
