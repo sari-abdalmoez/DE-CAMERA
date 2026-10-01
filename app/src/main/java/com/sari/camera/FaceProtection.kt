@@ -19,7 +19,7 @@ object FaceProtection {
             for (i in 0 until n) {
                 val f = faces[i] ?: continue
                 f.getMidPoint(p)
-                val d = f.eyesDistance
+                val d = f.eyesDistance()
                 out.add(RectF(
                     (p.x - d * 1.7f) * bitmap.width / w,
                     (p.y - d * 2.0f) * bitmap.height / h,

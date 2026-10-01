@@ -67,7 +67,8 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
         out != null
     } catch (_: Throwable) { false }
 
-    private fun smokeTestOrtSuper(): Boolean = try {
+    private fun smokeTestOrtSuper(): Boolean {
+        return try {
         val w = if (superInputW > 0) superInputW else 32
         val h = if (superInputH > 0) superInputH else 32
         val zeros = FloatArray(3 * w * h)
@@ -75,7 +76,8 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
         val scaleOut = if (superInputW > 0 && superOutputW > 0) superOutputW.toFloat() / superInputW.toFloat() else 2f
         val expected = 3 * max(1, (w * scaleOut).toInt()) * max(1, (h * scaleOut).toInt())
         raw.size == expected
-    } catch (_: Throwable) { false }
+        } catch (_: Throwable) { false }
+    }
 
     private fun loadSuper(file: File?): Boolean {
         if (file == null || !file.isFile || file.length() < 1024) return false
