@@ -10,23 +10,45 @@ import java.nio.ByteBuffer
 import kotlin.math.min
 
 /**
- * Bounded-memory tile processor. Each tile has overlap context, but only its non-overlapping
- * core region is committed to the output. This avoids full-resolution accumulation buffers.
+ * Memory-bounded tiled image pipeline.
+ *
+ * 0-6x   : native denoise/detail path.
+ * 6-13x  : conservative AI super-resolution on overlapping tiles.
+ * 13-20x : stronger reconstruction around the tapped subject, lighter elsewhere.
+ *
+ * The destination remains the original photo dimensions; the AI's extra pixels are
+ * converted back into the tile's native size after inference. This keeps RAM bounded.
  */
 class TileProcessor(
-    private val tileSize: Int,
-    private val overlap: Int = 48,
     private val ai: AiEngine? = null,
-    private val faceBoxes: List<RectF> = emptyList()
+    private val controller: MemoryThermalController
 ) {
-    fun process(src: Bitmap, strength: Float): Bitmap {
-        val scale = ai?.scale?.coerceIn(1, 2) ?: 1
-        val outW = src.width * scale
-        val outH = src.height * scale
-        val out = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+    fun process(src: Bitmap, strength: Float): Bitmap = processZoom(
+        src = src,
+        zoom = 1f,
+        focusRoi = null,
+        faceBoxes = FaceProtection.detect(src),
+        onProgress = {}
+    )
+
+    fun processZoom(
+        src: Bitmap,
+        zoom: Float,
+        focusRoi: RectF?,
+        faceBoxes: List<RectF>,
+        onProgress: (Int) -> Unit
+    ): Bitmap {
+        val budget = controller.budget()
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        val coreStep = (tileSize - overlap * 2).coerceAtLeast(128)
+        val tileSize = budget.tile
+        val overlap = min(48, tileSize / 8)
+        val coreStep = (tileSize - overlap * 2).coerceAtLeast(160)
+        val totalX = ((src.width + coreStep - 1) / coreStep)
+        val totalY = ((src.height + coreStep - 1) / coreStep)
+        val total = totalX * totalY
+        var done = 0
 
         var y = 0
         while (y < src.height) {
@@ -39,133 +61,151 @@ class TileProcessor(
                 val r = min(src.width, coreRight + overlap)
                 val b = min(src.height, coreBottom + overlap)
                 val tile = Bitmap.createBitmap(src, l, t, r - l, b - t)
-                val protected = faceBoxes.any {
-                    it.intersects(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat())
+
+                val tileRect = RectF(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat())
+                val focusHit = focusRoi?.let { intersects(tileRect, it) } == true
+                val faceHit = faceBoxes.any { intersects(tileRect, it) }
+                val level = when {
+                    zoom >= 13f -> 2
+                    zoom >= 6f -> 1
+                    else -> 0
                 }
-                val localStrength = (if (protected) strength * 0.22f else strength).coerceIn(0f, 1f)
-                val tileOut = runTile(tile, localStrength, scale, protected)
+                val aiBlend = when (level) {
+                    2 -> if (focusHit) budget.aiStrength13to20 else budget.aiStrength13to20 * 0.46f
+                    1 -> if (focusHit) budget.aiStrength6to13 + 0.08f else budget.aiStrength6to13
+                    else -> 0f
+                }
 
-                val srcCoreLeft = (x - l) * scale
-                val srcCoreTop = (y - t) * scale
-                val srcCoreRight = (coreRight - l) * scale
-                val srcCoreBottom = (coreBottom - t) * scale
-                val source = Rect(srcCoreLeft, srcCoreTop, srcCoreRight, srcCoreBottom)
-                val dest = Rect(x * scale, y * scale, coreRight * scale, coreBottom * scale)
-                canvas.drawBitmap(tileOut, source, dest, paint)
+                val tileOut = runTile(tile, level, aiBlend, faceHit, focusHit)
 
-                tileOut.recycle()
+                val coreSrc = Rect(
+                    (x - l).coerceAtLeast(0),
+                    (y - t).coerceAtLeast(0),
+                    (coreRight - l).coerceAtLeast(1),
+                    (coreBottom - t).coerceAtLeast(1)
+                )
+                val coreDst = Rect(x, y, coreRight, coreBottom)
+                canvas.drawBitmap(tileOut, coreSrc, coreDst, paint)
+
                 tile.recycle()
+                tileOut.recycle()
                 x += coreStep
+                done++
+                onProgress(((done * 100f) / total).toInt().coerceIn(0, 100))
             }
             y += coreStep
         }
         return out
     }
 
-    private fun runTile(tile: Bitmap, strength: Float, scale: Int, faceProtected: Boolean): Bitmap {
-        val w = tile.width
-        val h = tile.height
-        val ints = IntArray(w * h)
-        tile.getPixels(ints, 0, w, 0, 0, w, h)
-        val plane = w * h
-        val input = FloatArray(3 * plane)
-        for (i in ints.indices) {
-            val c = ints[i]
-            input[i] = Color.red(c) / 255f
-            input[plane + i] = Color.green(c) / 255f
-            input[2 * plane + i] = Color.blue(c) / 255f
-        }
+    private fun runTile(tile: Bitmap, level: Int, aiBlend: Float, faceHit: Boolean, focusHit: Boolean): Bitmap {
+        var base = tile
+        try {
+            val allowAi = level == 1 || (level >= 2 && (focusHit || faceHit))
+            if (level > 0 && allowAi && ai != null && (ai.superResolutionAvailable || ai.ncnnAvailable)) {
+                val aiResult = ai.superResolveTile(tile, strong = level >= 2)
+                if (aiResult != null) {
+                    val reduced = Bitmap.createScaledBitmap(aiResult, tile.width, tile.height, true)
+                    aiResult.recycle()
 
-        if (ai?.deblurAvailable == true && w >= 384 && h >= 384 && !faceProtected) {
-            val restored = ai.inferDeblur(input, h, w)
-            if (restored != null && restored.size == 3 * plane) {
-                val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val op = IntArray(plane)
-                val blend = (0.20f + 0.28f * strength).coerceIn(0.20f, 0.48f)
-                for (i in 0 until plane) {
-                    val r = input[i] * (1f - blend) + restored[i].coerceIn(0f, 1f) * blend
-                    val g = input[plane + i] * (1f - blend) + restored[plane + i].coerceIn(0f, 1f) * blend
-                    val b = input[2 * plane + i] * (1f - blend) + restored[2 * plane + i].coerceIn(0f, 1f) * blend
-                    op[i] = Color.rgb((r * 255f).coerceIn(0f, 255f).toInt(), (g * 255f).coerceIn(0f, 255f).toInt(), (b * 255f).coerceIn(0f, 255f).toInt())
+                    // Faces are enhanced, but the original pixels remain dominant so identity,
+                    // pore texture and geometry are not replaced by a synthetic face.
+                    val evidence = detailEvidence(tile)
+                    var safeBlend = if (faceHit) aiBlend * 0.74f else aiBlend
+                    safeBlend *= when {
+                        evidence < 0.08f -> 0.40f
+                        evidence < 0.18f -> 0.66f
+                        else -> 1f
+                    }
+
+                    // If the network changes the tile too aggressively, reduce the blend.
+                    // This is a reconstruction guard: low-evidence or wildly different AI
+                    // output must fall back toward the actual captured pixels.
+                    val deviation = meanAbsoluteDeviation(tile, reduced)
+                    if (deviation > 0.16f) {
+                        safeBlend *= (0.16f / deviation).coerceIn(0.18f, 1f)
+                    }
+                    val mixed = Bitmap.createBitmap(tile.width, tile.height, Bitmap.Config.ARGB_8888)
+                    val c = Canvas(mixed)
+                    c.drawBitmap(tile, 0f, 0f, null)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (safeBlend.coerceIn(0f, 0.65f) * 255f).toInt()
+                    }
+                    c.drawBitmap(reduced, 0f, 0f, p)
+                    reduced.recycle()
+                    base = mixed
                 }
-                out.setPixels(op, 0, w, 0, 0, w, h)
-                return if (scale == 1 || ai.superResolutionAvailable.not()) out else superResolve(out, scale, strength)
             }
-        }
 
-        if (ai?.superResolutionAvailable == true) {
-            val result = ai.inferSuper(input, h, w)
-            val ow = w * scale
-            val oh = h * scale
-            if (result != null && result.size == 3 * ow * oh) {
-                val out = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
-                val op = IntArray(ow * oh)
-                for (i in op.indices) {
-                    op[i] = Color.rgb(
-                        (result[i].coerceIn(0f, 1f) * 255f).toInt(),
-                        (result[ow * oh + i].coerceIn(0f, 1f) * 255f).toInt(),
-                        (result[2 * ow * oh + i].coerceIn(0f, 1f) * 255f).toInt()
-                    )
-                }
-                out.setPixels(op, 0, ow, 0, 0, ow, oh)
-                val bicubic = Bitmap.createScaledBitmap(tile, ow, oh, true)
-                val canvas = Canvas(bicubic)
-                val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                    alpha = (46 + 64 * strength).toInt().coerceIn(46, 110)
-                }
-                canvas.drawBitmap(out, 0f, 0f, paint)
-                out.recycle()
-                return bicubic
+            // Always apply the native path after AI. It is intentionally mild and preserves
+            // real edge/texture information from the camera instead of hallucinating detail.
+            val rgbaIn = ByteBuffer.allocateDirect(base.width * base.height * 4)
+            base.copyPixelsToBuffer(rgbaIn); rgbaIn.rewind()
+            val rgbaOut = ByteBuffer.allocateDirect(base.width * base.height * 4)
+            val nativeStrength = when (level) {
+                2 -> 0.22f
+                1 -> 0.18f
+                else -> 0.30f
             }
+            NativeEngine.processTileRGBA(rgbaIn, rgbaOut, base.width, base.height, nativeStrength)
+            rgbaOut.rewind()
+            val native = Bitmap.createBitmap(base.width, base.height, Bitmap.Config.ARGB_8888)
+            native.copyPixelsFromBuffer(rgbaOut)
+            if (base !== tile) base.recycle()
+            return native
+        } catch (_: Throwable) {
+            if (base !== tile) base.recycle()
+            return tile.copy(Bitmap.Config.ARGB_8888)
         }
-
-        val inputBuffer = ByteBuffer.allocateDirect(w * h * 4)
-        tile.copyPixelsToBuffer(inputBuffer)
-        inputBuffer.rewind()
-        val processed = ByteBuffer.allocateDirect(w * h * 4)
-        NativeEngine.processTileRGBA(inputBuffer, processed, w, h, strength)
-        processed.rewind()
-        val base = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        base.copyPixelsFromBuffer(processed)
-        return if (scale == 1) base else Bitmap.createScaledBitmap(base, w * scale, h * scale, true).also { base.recycle() }
     }
 
-    private fun superResolve(input: Bitmap, scale: Int, strength: Float): Bitmap {
-        if (scale == 1 || ai?.superResolutionAvailable != true) return input
-        val w = input.width
-        val h = input.height
-        val plane = w * h
-        val ints = IntArray(plane)
-        input.getPixels(ints, 0, w, 0, 0, w, h)
-        val f = FloatArray(3 * plane)
-        for (i in 0 until plane) {
-            val c = ints[i]
-            f[i] = Color.red(c) / 255f
-            f[plane + i] = Color.green(c) / 255f
-            f[2 * plane + i] = Color.blue(c) / 255f
+
+    private fun detailEvidence(bitmap: Bitmap): Float {
+        val step = 6
+        var k = 0
+        var sum = 0.0
+        var sq = 0.0
+        var y = 0
+        while (y < bitmap.height) {
+            var x = 0
+            while (x < bitmap.width) {
+                val c = bitmap.getPixel(x, y)
+                val l = (0.2126 * Color.red(c) + 0.7152 * Color.green(c) + 0.0722 * Color.blue(c)) / 255.0
+                k++
+                sum += l
+                sq += l * l
+                x += step
+            }
+            y += step
         }
-        val result = ai.inferSuper(f, h, w) ?: return input
-        val ow = w * scale
-        val oh = h * scale
-        if (result.size != 3 * ow * oh) return input
-        val neural = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
-        val op = IntArray(ow * oh)
-        for (i in op.indices) {
-            op[i] = Color.rgb(
-                (result[i].coerceIn(0f, 1f) * 255f).toInt(),
-                (result[ow * oh + i].coerceIn(0f, 1f) * 255f).toInt(),
-                (result[2 * ow * oh + i].coerceIn(0f, 1f) * 255f).toInt()
-            )
-        }
-        neural.setPixels(op, 0, ow, 0, 0, ow, oh)
-        val bicubic = Bitmap.createScaledBitmap(input, ow, oh, true)
-        val canvas = Canvas(bicubic)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            alpha = (50 + 60 * strength).toInt().coerceIn(50, 105)
-        }
-        canvas.drawBitmap(neural, 0f, 0f, paint)
-        neural.recycle()
-        input.recycle()
-        return bicubic
+        if (k == 0) return 0f
+        val mean = sum / k
+        val variance = (sq / k - mean * mean).coerceAtLeast(0.0)
+        return kotlin.math.sqrt(variance).toFloat()
     }
+
+    private fun meanAbsoluteDeviation(a: Bitmap, b: Bitmap): Float {
+        val step = 8
+        var sum = 0.0
+        var count = 0
+        var y = 0
+        while (y < a.height) {
+            var x = 0
+            while (x < a.width) {
+                val ca = a.getPixel(x, y)
+                val cb = b.getPixel(x, y)
+                val dr = kotlin.math.abs(Color.red(ca) - Color.red(cb)) / 255.0
+                val dg = kotlin.math.abs(Color.green(ca) - Color.green(cb)) / 255.0
+                val db = kotlin.math.abs(Color.blue(ca) - Color.blue(cb)) / 255.0
+                sum += (dr + dg + db) / 3.0
+                count++
+                x += step
+            }
+            y += step
+        }
+        return if (count == 0) 0f else (sum / count).toFloat()
+    }
+
+    private fun intersects(a: RectF, b: RectF): Boolean =
+        a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }

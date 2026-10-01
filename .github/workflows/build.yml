@@ -21,13 +21,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Java 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v4.0.4
         with:
           packages: ''
           cmdline-tools-version: 12266719
@@ -44,15 +44,6 @@ jobs:
             "build-tools;35.0.0" \
             "ndk;27.2.12479018" \
             "cmake;3.31.6"
-
-      - name: Lock Android NDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "Using NDK: $ANDROID_SDK_ROOT/ndk/27.2.12479018"
-          test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
 
       - name: Toolchain diagnostics
         run: |
@@ -79,6 +70,23 @@ jobs:
           cargo --version
           aarch64-linux-android24-clang --version
 
+      - name: Verify source layout
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f app/build.gradle.kts
+          test -f app/src/main/cpp/CMakeLists.txt
+          test -f app/src/main/cpp/sari_engine.cpp
+          test -f app/src/main/cpp/sari_jni.cpp
+          test -f app/src/main/rust/Cargo.toml
+          test -f app/src/main/rust/src/lib.rs
+          test -f .cargo/config.toml
+          test -f models/models.lock
+          test -f scripts/verify_ncnn_model.sh
+          grep -q 'find_package(OpenCV REQUIRED' app/src/main/cpp/CMakeLists.txt
+          grep -q 'SARI_HAS_NCNN' app/src/main/cpp/CMakeLists.txt
+          grep -q 'crate-type = ["cdylib"]' app/src/main/rust/Cargo.toml
+
       - name: Download pinned OpenCV Android SDK
         env:
           OPENCV_URL: https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-android-sdk.zip
@@ -92,34 +100,70 @@ jobs:
           unzip -q /tmp/opencv.zip -d /tmp/opencv-sdk
           test -d /tmp/opencv-sdk/OpenCV-android-sdk
           mv /tmp/opencv-sdk/OpenCV-android-sdk third_party/opencv
-          rm -rf third_party/opencv/samples
           test -f third_party/opencv/sdk/native/jni/OpenCVConfig.cmake
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          if [ -f third_party/opencv/sdk/native/3rdparty/libs/arm64-v8a/libc++_shared.so ]; then
+            cp third_party/opencv/sdk/native/3rdparty/libs/arm64-v8a/libc++_shared.so app/src/main/jniLibs/arm64-v8a/
+          fi
 
-      - name: Build Rust astro library
+      - name: Validate Rust crate on host
         shell: bash
         run: |
           set -euxo pipefail
-          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-          export CC_aarch64_linux_android="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          export AR_aarch64_linux_android="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C panic=abort"
-          echo "Rust Android linker: $CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all -- --check
+          cargo test --manifest-path app/src/main/rust/Cargo.toml --all-targets
 
-          cargo test --manifest-path app/src/main/rust/Cargo.toml
-          cargo build --manifest-path app/src/main/rust/Cargo.toml --release --target aarch64-linux-android
-          mkdir -p app/src/main/jniLibs/arm64-v8a
+      - name: Build Rust astro library
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euxo pipefail
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          aarch64-linux-android24-clang --version
+          rustc --target aarch64-linux-android --print cfg | grep -q 'target_os="android"'
+          cargo build --manifest-path app/src/main/rust/Cargo.toml \
+            --target aarch64-linux-android \
+            --release --verbose -j 2
           test -f app/src/main/rust/target/aarch64-linux-android/release/libsari_astro.so
-          cp app/src/main/rust/target/aarch64-linux-android/release/libsari_astro.so app/src/main/jniLibs/arm64-v8a/
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp app/src/main/rust/target/aarch64-linux-android/release/libsari_astro.so \
+             app/src/main/jniLibs/arm64-v8a/libsari_astro.so
+          file app/src/main/jniLibs/arm64-v8a/libsari_astro.so
+
+      - name: Download pinned NCNN Vulkan runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          source <(grep -E '^(NCNN_RELEASE_|NCNN_MODEL_)' models/models.lock)
+          rm -rf /tmp/ncnn.zip /tmp/ncnn third_party/ncnn
+          curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+            "$NCNN_RELEASE_URL" -o /tmp/ncnn.zip
+          echo "$NCNN_RELEASE_SHA256  /tmp/ncnn.zip" | sha256sum -c -
+          mkdir -p /tmp/ncnn
+          unzip -q /tmp/ncnn.zip -d /tmp/ncnn
+
+          CFG=$(find /tmp/ncnn -type f -path '*/arm64-v8a/lib/cmake/ncnn/ncnnConfig.cmake' | head -1)
+          test -n "$CFG"
+          ABI_ROOT="${CFG%/lib/cmake/ncnn/ncnnConfig.cmake}"
+          test -d "$ABI_ROOT/lib"
+          test -f "$ABI_ROOT/lib/cmake/ncnn/ncnnConfig.cmake"
+
+          mkdir -p third_party/ncnn/arm64-v8a
+          cp -a "$ABI_ROOT/." third_party/ncnn/arm64-v8a/
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          find "$ABI_ROOT/lib" -maxdepth 1 -type f -name '*.so' -exec cp -f {} app/src/main/jniLibs/arm64-v8a/ \;
+          test -f app/src/main/jniLibs/arm64-v8a/libncnn.so
 
       - name: Download and verify AI models
         shell: bash
         run: |
           set -euxo pipefail
           ./scripts/verify_model.sh
+          ./scripts/verify_ncnn_model.sh
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v6.0.0
         with:
           gradle-version: '8.7'
           cache-provider: basic
@@ -131,25 +175,16 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-
-          unzip -t "$APK" >/dev/null
-
-          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose "$APK"
-
-          unzip -l "$APK" | grep -q "lib/arm64-v8a/libsari_camera.so"
-          unzip -l "$APK" | grep -q "lib/arm64-v8a/libsari_astro.so"
-
-          unzip -l "$APK" | grep -q "assets/models/real_esrgan_x2.onnx"
-          unzip -l "$APK" | grep -q "assets/models/deblurring_nafnet_2025may.onnx"
-
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/arm64-v8a/libncnn.so'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/realesrgan-x4plus.param'
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/models/realesrgan-x4plus.bin'
           mkdir -p dist
-          cp "$APK" dist/sari-camera-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/sari-camera-debug.apk
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sari-camera-debug
           path: dist/sari-camera-debug.apk

@@ -1,10 +1,28 @@
 # SARI Camera AI model lock
-# Both files are downloaded by CI and SHA-256 verified before packaging.
+# ONNX models are verified by SHA-256.
+# The NCNN Real-ESRGAN model is additionally pinned to an exact upstream git commit
+# and its Git blob SHA-1 values are checked after download.
+
 ESRGAN_FILE=real_esrgan_x2.onnx
 ESRGAN_URL=https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/main/real_esrgan_x2.onnx?download=true
 ESRGAN_SHA256=7115ba92e8a1bfa63d68558ef006ef3d91273a068d321b1439f8bb1c9179002c
 ESRGAN_SCALE=2
+
 NAFNET_FILE=deblurring_nafnet_2025may.onnx
 NAFNET_URL=https://huggingface.co/opencv/deblurring_nafnet/resolve/main/deblurring_nafnet_2025may.onnx
 NAFNET_SHA256=07263f416febecce10193dd648e950b22e397cf521eedab1a114ef77b2bc9587
 NAFNET_SCALE=1
+
+NCNN_MODEL_COMMIT=2014a63534217e8f6f27a53867083fcda5b61ff2
+NCNN_MODEL_REPO=https://github.com/genie-design/ESRGAN-ncnn-models.git
+NCNN_MODEL_NAME=realesrgan-x4plus
+NCNN_PARAM_FILE=realesrgan-x4plus.param
+NCNN_BIN_FILE=realesrgan-x4plus.bin
+NCNN_PARAM_BLOB_SHA1=d14d62ebb815bdd522ed112e67695b3377f86ca0
+NCNN_BIN_BLOB_SHA1=5cea94783710c25d6fffa9fe9b59999498aec3d4
+NCNN_SCALE=4
+
+NCNN_RELEASE_TAG=20260526
+NCNN_RELEASE_FILE=ncnn-20260526-android-vulkan-shared.zip
+NCNN_RELEASE_URL=https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan-shared.zip
+NCNN_RELEASE_SHA256=eb205b332274974511890903828451ae7a4c19c309f21431536e0a8c9f3dd0c1

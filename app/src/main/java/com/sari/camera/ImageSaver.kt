@@ -2,17 +2,54 @@ package com.sari.camera
 
 import android.content.ContentValues
 import android.content.Context
-import android.graphics.Bitmap
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
-import java.io.OutputStream
+import java.io.File
 
 object ImageSaver {
-    fun saveJpeg(context: Context, bitmap: Bitmap, astro: Boolean = false): Uri? {
-        val path = if (astro) "Pictures/SARI Camera/Astro" else "Pictures/SARI Camera"
-        val v = ContentValues().apply { put(MediaStore.Images.Media.DISPLAY_NAME, "SARI_${System.currentTimeMillis()}.jpg"); put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg"); if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, path); else put(MediaStore.Images.Media.DATA, java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES), "SARI_${System.currentTimeMillis()}.jpg").absolutePath); if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.IS_PENDING, 1) }
-        val resolver = context.contentResolver; val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v) ?: return null
-        return try { resolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it) }; if (Build.VERSION.SDK_INT >= 29) resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null); uri } catch (e: Exception) { resolver.delete(uri,null,null); null }
+    fun saveJpeg(context: Context, bitmap: android.graphics.Bitmap, astro: Boolean = false): Uri? {
+        val name = "SARI_${System.currentTimeMillis()}.jpg"
+        return if (Build.VERSION.SDK_INT >= 29) {
+            val path = if (astro) "Pictures/SARI Camera/Astro" else "Pictures/SARI Camera"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, path)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+            try {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it)
+                }
+                context.contentResolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                    null,
+                    null
+                )
+                uri
+            } catch (_: Throwable) {
+                context.contentResolver.delete(uri, null, null)
+                null
+            }
+        } else {
+            val dir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                if (astro) "SARI Camera/Astro" else "SARI Camera"
+            ).apply { mkdirs() }
+            val file = File(dir, name)
+            return try {
+                file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it) }
+                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+                Uri.fromFile(file)
+            } catch (_: Throwable) {
+                file.delete()
+                null
+            }
+        }
     }
 }

@@ -1,0 +1,7 @@
+# CI invokes Cargo from repository root with --manifest-path.
+# Keep this configuration at the repository root so Cargo discovers it.
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android24-clang"
+
+[build]
+rustflags = ["-C", "panic=abort"]
