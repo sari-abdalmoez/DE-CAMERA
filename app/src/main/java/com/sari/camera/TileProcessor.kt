@@ -155,7 +155,7 @@ class TileProcessor(
             return native
         } catch (_: Throwable) {
             if (base !== tile) base.recycle()
-            return tile.copy(Bitmap.Config.ARGB_8888)
+            return tile.copy(Bitmap.Config.ARGB_8888, true)
         }
     }
 
