@@ -52,7 +52,7 @@ class AiEngine(private val context: Context) : AutoCloseable {
         setIntraOpNumThreads(2); setInterOpNumThreads(1); setMemoryPatternOptimization(true)
     })
 
-    private fun tensorInfo(info: ai.onnxruntime.OnnxValue?): ai.onnxruntime.TensorInfo? = info as? ai.onnxruntime.TensorInfo
+    private fun tensorInfo(info: ai.onnxruntime.ValueInfo?): ai.onnxruntime.TensorInfo? = info as? ai.onnxruntime.TensorInfo
 
     fun inferSuper(input: FloatArray, height: Int, width: Int): FloatArray? = infer(superSession, input, height, width)
     fun inferDeblur(input: FloatArray, height: Int, width: Int): FloatArray? = infer(deblurSession, input, height, width)

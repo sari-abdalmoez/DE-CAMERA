@@ -39,7 +39,7 @@ object CapabilityDetector {
             c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS) ?: floatArrayOf(),
             c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE),
             c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE),
-            (c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()).contains(CameraCharacteristics.LENS_OPTICAL_STABILIZATION),
+            (c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()).contains(CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON),
             (c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()).contains(CameraCharacteristics.CONTROL_VIDEO_STABILIZATION_MODE_ON),
             c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE),
             c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE),

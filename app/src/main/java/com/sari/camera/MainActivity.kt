@@ -8,7 +8,6 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
-import android.media.DngCreator
 import android.media.Image
 import android.media.ImageReader
 import android.media.MediaRecorder
@@ -19,6 +18,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.widget.*
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -55,6 +55,16 @@ class MainActivity : ComponentActivity() {
     private var lastResult: TotalCaptureResult? = null
     private val captureBusy = AtomicBoolean(false)
 
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val cameraGranted = grants[Manifest.permission.CAMERA] == true
+        val storageGranted = Build.VERSION.SDK_INT >= 29 ||
+            grants[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true
+        if (cameraGranted && storageGranted && preview.isAvailable) openCamera()
+    }
+
+
     private val thermalListener = PowerManager.OnThermalStatusChangedListener { status ->
         runOnUiThread {
             thermalText.text = if (status >= PowerManager.THERMAL_STATUS_SEVERE) "Performance reduced" else ""
@@ -88,7 +98,7 @@ class MainActivity : ComponentActivity() {
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
         if (Build.VERSION.SDK_INT >= 29) getSystemService(PowerManager::class.java).addThermalStatusListener(mainExecutor, thermalListener)
-        if (!hasCameraPermission()) ActivityCompat.requestPermissions(this, requiredPermissions(), 10)
+        if (!hasCameraPermission()) permissionLauncher.launch(requiredPermissions())
     }
 
     private fun hasCameraPermission() = ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -436,11 +446,6 @@ class MainActivity : ComponentActivity() {
                 bitmaps.forEach { try { it.recycle() } catch (_: Throwable) {} }
             } finally { files.forEach(File::delete) }
         }.start()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grants: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grants)
-        if (requestCode == 10 && hasCameraPermission() && (Build.VERSION.SDK_INT >= 29 || ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) && preview.isAvailable) openCamera()
     }
 
     override fun onDestroy() {
