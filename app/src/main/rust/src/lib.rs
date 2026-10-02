@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::ffi::c_int;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Star { pub x:f32, pub y:f32, pub flux:f32, pub pixels:u32 }
 
 fn mean_std(data:&[u8], w:usize,h:usize,stride:usize)->(f32,f32){
