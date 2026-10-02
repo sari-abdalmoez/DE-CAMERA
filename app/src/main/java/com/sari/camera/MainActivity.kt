@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        WindowCompat.setDecorFitsSystemWindows(this, false)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
 
         preview = findViewById(R.id.preview)

@@ -17,6 +17,6 @@ class GalleryActivity: ComponentActivity(){
   } else {
    "${MediaStore.Images.Media.DATA} LIKE ?" to arrayOf("%/Pictures/SARI Camera/%")
   }
-  contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,projection,selection,args,"${MediaStore.Images.Media.DATE_ADDED} DESC")?.use{c->while(c.moveToNext()){val id=c.getLong(0);val name=c.getString(1);val mime=c.getString(2);val uri=Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,id);val item=Button(this).apply{text=name;setOnClickListener{startActivity(Intent(this@GalleryActivity,ViewerActivity::class.java).apply{data=uri;putExtra("mime",mime);putExtra("name",name)})}};list.addView(item,LinearLayout.LayoutParams(-1,64))}}
+  contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,projection,selection,args,"${MediaStore.Images.Media.DATE_ADDED} DESC")?.use{c->while(c.moveToNext()){val id=c.getLong(0);val name=c.getString(1);val mime=c.getString(2);val uri=Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,id.toString());val item=Button(this).apply{text=name;setOnClickListener{startActivity(Intent(this@GalleryActivity,ViewerActivity::class.java).apply{data=uri;putExtra("mime",mime);putExtra("name",name)})}};list.addView(item,LinearLayout.LayoutParams(-1,64))}}
  }
 }
