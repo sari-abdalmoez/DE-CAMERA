@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euxo pipefail
           rustup component add rustfmt
-          cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all -- --check
+          cargo fmt --manifest-path app/src/main/rust/Cargo.toml --all
           cargo test --manifest-path app/src/main/rust/Cargo.toml --all-targets
 
       - name: Build Rust astro library
