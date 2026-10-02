@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   NDK_VERSION: 27.3.13750724
@@ -193,9 +193,12 @@ jobs:
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/sari-camera-debug.apk
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v7.0.1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: sari-camera-debug
-          path: dist/sari-camera-debug.apk
-          if-no-files-found: error
+          tag_name: build-${{ github.run_number }}
+          name: SARI Camera Build ${{ github.run_number }}
+          files: dist/sari-camera-debug.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
