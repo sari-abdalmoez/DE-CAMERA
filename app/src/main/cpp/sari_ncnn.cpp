@@ -27,15 +27,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sari_camera_NativeEngine_ncnnVulkanAvailable(JNIEnv*, jobject) {
 #ifdef SARI_HAS_NCNN
     std::lock_guard<std::mutex> lock(g_mutex);
-    try {
-        if (!g_gpu_created) {
-            if (ncnn::create_gpu_instance() != 0) return JNI_FALSE;
-            g_gpu_created = true;
-        }
-        return ncnn::get_gpu_count() > 0 ? JNI_TRUE : JNI_FALSE;
-    } catch (...) {
-        return JNI_FALSE;
+    if (!g_gpu_created) {
+        if (ncnn::create_gpu_instance() != 0) return JNI_FALSE;
+        g_gpu_created = true;
     }
+    return ncnn::get_gpu_count() > 0 ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif
@@ -59,32 +55,32 @@ Java_com_sari_camera_NativeEngine_ncnnInit(JNIEnv* env, jobject, jstring paramPa
         return JNI_TRUE;
     }
 
-    try {
-        g_use_vulkan = useVulkan == JNI_TRUE && ncnn::get_gpu_count() > 0;
-        if (g_use_vulkan && !g_gpu_created) {
-            ncnn::create_gpu_instance();
+    g_use_vulkan = useVulkan == JNI_TRUE && ncnn::get_gpu_count() > 0;
+    if (g_use_vulkan && !g_gpu_created) {
+        if (ncnn::create_gpu_instance() != 0) {
+            g_use_vulkan = false;
+        } else {
             g_gpu_created = true;
         }
-        g_net.clear();
-        g_net.opt.use_vulkan_compute = g_use_vulkan;
-        g_net.opt.num_threads = 2;
-        g_net.opt.use_fp16_packed = true;
-        g_net.opt.use_fp16_storage = true;
-        g_net.opt.use_fp16_arithmetic = g_use_vulkan;
+    }
 
-        if (g_net.load_param(p) != 0 || g_net.load_model(m) != 0) {
-            env->ReleaseStringUTFChars(paramPath, p);
-            env->ReleaseStringUTFChars(modelPath, m);
-            g_net.clear();
-            g_loaded = false;
-            return JNI_FALSE;
-        }
-        g_scale = 4;
-        g_loaded = true;
-    } catch (...) {
+    g_net.clear();
+    g_net.opt.use_vulkan_compute = g_use_vulkan;
+    g_net.opt.num_threads = 2;
+    g_net.opt.use_fp16_packed = true;
+    g_net.opt.use_fp16_storage = true;
+    g_net.opt.use_fp16_arithmetic = g_use_vulkan;
+
+    if (g_net.load_param(p) != 0 || g_net.load_model(m) != 0) {
+        env->ReleaseStringUTFChars(paramPath, p);
+        env->ReleaseStringUTFChars(modelPath, m);
         g_net.clear();
         g_loaded = false;
+        return JNI_FALSE;
     }
+
+    g_scale = 4;
+    g_loaded = true;
 
     env->ReleaseStringUTFChars(paramPath, p);
     env->ReleaseStringUTFChars(modelPath, m);
@@ -109,23 +105,19 @@ Java_com_sari_camera_NativeEngine_ncnnProcessRGBA(JNIEnv* env, jobject, jobject 
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_loaded) return -2;
 
-    try {
-        // The stock Real-ESRGAN NCNN model uses input blob `data` and output blob `output`.
-        ncnn::Mat in = ncnn::Mat::from_pixels(src, ncnn::Mat::PIXEL_RGBA2RGB, width, height);
-        ncnn::Extractor ex = g_net.create_extractor();
-        ex.set_light_mode(true);
-        ex.set_num_threads(2);
-        ex.input("data", in);
+    // The stock Real-ESRGAN NCNN model uses input blob `data` and output blob `output`.
+    ncnn::Mat in = ncnn::Mat::from_pixels(src, ncnn::Mat::PIXEL_RGBA2RGB, width, height);
+    ncnn::Extractor ex = g_net.create_extractor();
+    ex.set_light_mode(true);
+    ex.input("data", in);
 
-        ncnn::Mat out;
-        if (ex.extract("output", out) != 0 || out.empty()) return -3;
-        if (out.c < 3) return -4;
-        const int rc = out.to_pixels(dst, ncnn::Mat::PIXEL_RGB2RGBA);
-        if (rc != 0) return -5;
-        return useVulkan == JNI_TRUE ? 1 : 0;
-    } catch (...) {
-        return -6;
-    }
+    ncnn::Mat out;
+    if (ex.extract("output", out) != 0 || out.empty()) return -3;
+    if (out.c < 3) return -4;
+
+    // to_pixels() is void in the pinned NCNN API.
+    out.to_pixels(dst, ncnn::Mat::PIXEL_RGB2RGBA);
+    return useVulkan == JNI_TRUE ? 1 : 0;
 #else
     (void)env; (void)input; (void)output; (void)width; (void)height; (void)useVulkan;
     return -10;
