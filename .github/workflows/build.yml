@@ -108,6 +108,7 @@ jobs:
           unzip -q /tmp/opencv.zip -d /tmp/opencv-sdk
           test -d /tmp/opencv-sdk/OpenCV-android-sdk
           mv /tmp/opencv-sdk/OpenCV-android-sdk third_party/opencv
+          rm -rf third_party/opencv/samples
           test -f third_party/opencv/sdk/native/jni/OpenCVConfig.cmake
           mkdir -p app/src/main/jniLibs/arm64-v8a
           if [ -f third_party/opencv/sdk/native/3rdparty/libs/arm64-v8a/libc++_shared.so ]; then
