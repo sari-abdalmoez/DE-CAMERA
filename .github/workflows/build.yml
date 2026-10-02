@@ -1,4 +1,4 @@
-name: SARI Camera Build
+name: SARI Camera Build # trigger
 
 on:
   workflow_dispatch:
