@@ -2,6 +2,7 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
     <application android:theme="@style/Theme.SARICamera" android:label="SARI Camera" android:allowBackup="false" android:supportsRtl="true">
         <activity android:name=".GalleryActivity" android:exported="false"/><activity android:name=".ViewerActivity" android:exported="false"/><activity android:name=".SettingsActivity" android:exported="false"/><activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">

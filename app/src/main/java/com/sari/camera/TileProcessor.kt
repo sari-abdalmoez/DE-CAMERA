@@ -42,7 +42,7 @@ class TileProcessor(
         val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        val tileSize = if (zoom >= 13f) min(budget.tile, 320) else budget.tile
+        val tileSize = budget.tile
         val overlap = min(48, tileSize / 8)
         val coreStep = (tileSize - overlap * 2).coerceAtLeast(160)
         val totalX = ((src.width + coreStep - 1) / coreStep)
@@ -147,19 +147,7 @@ class TileProcessor(
                 1 -> 0.18f
                 else -> 0.30f
             }
-            val nativeRc = NativeEngine.processTileRGBA(
-                rgbaIn,
-                rgbaOut,
-                base.width,
-                base.height,
-                nativeStrength
-            )
-
-            if (nativeRc < 0) {
-                if (base !== tile) base.recycle()
-                return tile.copy(Bitmap.Config.ARGB_8888, true)
-            }
-
+            NativeEngine.processTileRGBA(rgbaIn, rgbaOut, base.width, base.height, nativeStrength)
             rgbaOut.rewind()
             val native = Bitmap.createBitmap(base.width, base.height, Bitmap.Config.ARGB_8888)
             native.copyPixelsFromBuffer(rgbaOut)
@@ -167,7 +155,7 @@ class TileProcessor(
             return native
         } catch (_: Throwable) {
             if (base !== tile) base.recycle()
-            return tile.copy(Bitmap.Config.ARGB_8888, true)
+            return tile.copy(Bitmap.Config.ARGB_8888)
         }
     }
 

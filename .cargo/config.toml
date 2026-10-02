@@ -3,3 +3,5 @@
 [target.aarch64-linux-android]
 linker = "aarch64-linux-android24-clang"
 
+[build]
+rustflags = ["-C", "panic=abort"]

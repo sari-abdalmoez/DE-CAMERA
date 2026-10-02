@@ -22,8 +22,11 @@ object ImageSaver {
             }
             val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
             try {
-                context.contentResolver.openOutputStream(uri)?.use {
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it)
+                val stream = context.contentResolver.openOutputStream(uri) ?: throw IllegalStateException("Gallery stream unavailable")
+                stream.use {
+                    if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it)) {
+                        throw IllegalStateException("JPEG compression failed")
+                    }
                 }
                 context.contentResolver.update(
                     uri,
@@ -43,7 +46,11 @@ object ImageSaver {
             ).apply { mkdirs() }
             val file = File(dir, name)
             return try {
-                file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it) }
+                file.outputStream().use {
+                    if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 96, it)) {
+                        throw IllegalStateException("JPEG compression failed")
+                    }
+                }
                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
                 Uri.fromFile(file)
             } catch (_: Throwable) {

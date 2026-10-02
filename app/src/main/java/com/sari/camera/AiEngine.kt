@@ -21,6 +21,7 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
     private var superSession: OrtSession? = null
     private var deblurSession: OrtSession? = null
+    private var deblurFile: File? = null
     private var superInputW = -1
     private var superInputH = -1
     private var superOutputW = -1
@@ -34,7 +35,10 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
 
     fun loadModels(superResolution: File?, deblur: File?, ncnnParam: File? = null, ncnnBin: File? = null): Boolean {
         superResolutionAvailable = loadSuper(superResolution)
-        deblurAvailable = loadDeblur(deblur)
+        // NAFNet is large (~92 MB). Keep its file path for lazy loading; do not
+        // allocate a second large ONNX graph during camera startup on low-RAM phones.
+        deblurFile = deblur?.takeIf { it.isFile && it.length() >= 1024 }
+        deblurAvailable = false
         ncnnVulkanAvailable = try { NativeEngine.ncnnVulkanAvailable() } catch (_: Throwable) { false }
         ncnnAvailable = try {
             if (ncnnParam?.isFile == true && ncnnBin?.isFile == true) {
@@ -69,14 +73,18 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
 
     private fun smokeTestOrtSuper(): Boolean {
         return try {
-        val w = if (superInputW > 0) superInputW else 32
-        val h = if (superInputH > 0) superInputH else 32
-        val zeros = FloatArray(3 * w * h)
-        val raw = infer(superSession, zeros, h, w) ?: return false
-        val scaleOut = if (superInputW > 0 && superOutputW > 0) superOutputW.toFloat() / superInputW.toFloat() else 2f
-        val expected = 3 * max(1, (w * scaleOut).toInt()) * max(1, (h * scaleOut).toInt())
-        raw.size == expected
-        } catch (_: Throwable) { false }
+            val w = if (superInputW > 0) superInputW else 32
+            val h = if (superInputH > 0) superInputH else 32
+            val zeros = FloatArray(3 * w * h)
+            val raw = infer(superSession, zeros, h, w) ?: return false
+            val scaleOut = if (superInputW > 0 && superOutputW > 0) {
+                superOutputW.toFloat() / superInputW.toFloat()
+            } else 2f
+            val expected = 3 * max(1, (w * scaleOut).toInt()) * max(1, (h * scaleOut).toInt())
+            raw.size == expected
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun loadSuper(file: File?): Boolean {
@@ -184,7 +192,11 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
     }
 
     fun inferSuper(input: FloatArray, height: Int, width: Int): FloatArray? = infer(superSession, input, height, width)
-    fun inferDeblur(input: FloatArray, height: Int, width: Int): FloatArray? = infer(deblurSession, input, height, width)
+    fun inferDeblur(input: FloatArray, height: Int, width: Int): FloatArray? {
+        if (deblurSession == null) loadDeblur(deblurFile)
+        deblurAvailable = deblurSession != null
+        return infer(deblurSession, input, height, width)
+    }
 
     private fun infer(session: OrtSession?, input: FloatArray, height: Int, width: Int): FloatArray? {
         val s = session ?: return null
@@ -228,7 +240,7 @@ class AiEngine(private val context: android.content.Context) : AutoCloseable {
     override fun close() {
         try { NativeEngine.ncnnRelease() } catch (_: Throwable) {}
         superSession?.close(); deblurSession?.close()
-        superSession = null; deblurSession = null
+        superSession = null; deblurSession = null; deblurFile = null
         ncnnAvailable = false; superResolutionAvailable = false; deblurAvailable = false
         scale = 1
     }

@@ -31,10 +31,10 @@ class MemoryThermalController(private val context: Context) {
             mi.lowMemory || total <= 3072 || avail < 700 || thermal >= PowerManager.THERMAL_STATUS_SEVERE ->
                 Budget(
                     Profile.LOW_MEMORY,
-                    tile = 320,
+                    tile = 384,
                     workers = 1,
-                    maxFrames = 3,
-                    imageMaxDimension = 1536,
+                    maxFrames = 4,
+                    imageMaxDimension = 1792,
                     aiStrength6to13 = 0.22f,
                     aiStrength13to20 = 0.30f
                 )
@@ -42,10 +42,10 @@ class MemoryThermalController(private val context: Context) {
             total >= 6144 && avail >= 2200 && thermal <= PowerManager.THERMAL_STATUS_MODERATE ->
                 Budget(
                     Profile.HIGH_PERFORMANCE,
-                    tile = 384,
-                    workers = 1,
-                    maxFrames = 5,
-                    imageMaxDimension = 2048,
+                    tile = 640,
+                    workers = 2,
+                    maxFrames = 10,
+                    imageMaxDimension = 2816,
                     aiStrength6to13 = 0.34f,
                     aiStrength13to20 = 0.44f
                 )
@@ -53,10 +53,10 @@ class MemoryThermalController(private val context: Context) {
             else ->
                 Budget(
                     Profile.BALANCED,
-                    tile = 384,
+                    tile = 448,
                     workers = 1,
-                    maxFrames = 4,
-                    imageMaxDimension = 1792,
+                    maxFrames = 6,
+                    imageMaxDimension = 2304,
                     aiStrength6to13 = 0.28f,
                     aiStrength13to20 = 0.38f
                 )

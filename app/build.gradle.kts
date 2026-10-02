@@ -1,20 +1,10 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 
 android { namespace = "com.sari.camera"; compileSdk = 35
-    ndkVersion = "27.2.12479018"
+    ndkVersion = "27.3.13750724"
     defaultConfig { applicationId = "com.sari.camera"; minSdk = 24; targetSdk = 35; versionCode = 1; versionName = "1.0.0"; ndk { abiFilters += listOf("arm64-v8a") } }
     buildFeatures { viewBinding = true }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6" } }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6"; arguments += listOf("-DANDROID_STL=c++_shared") } }
     packaging { jniLibs { useLegacyPackaging = true; pickFirsts += listOf("lib/arm64-v8a/libc++_shared.so") } }
 }
 

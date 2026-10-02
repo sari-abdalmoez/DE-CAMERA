@@ -2,7 +2,7 @@
 set -euo pipefail
 LOCK="${1:-models/models.lock}"
 set -a
-source <(grep -E '^NCNN_[A-Za-z0-9_]+=' "$LOCK")
+source <(grep -E '^(NCNN_MODEL_|NCNN_(PARAM|BIN)_FILE|NCNN_(PARAM|BIN)_BLOB_SHA1)=' "$LOCK")
 set +a
 
 mkdir -p app/src/main/assets/models

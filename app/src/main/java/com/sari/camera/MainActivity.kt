@@ -27,6 +27,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
 import android.os.SystemClock
+import java.nio.ByteBuffer
 import android.provider.MediaStore
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -48,7 +49,6 @@ import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -67,6 +67,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var zoomBar: LinearLayout
     private lateinit var flashButton: ImageButton
     private lateinit var switchCameraButton: ImageButton
+    private lateinit var galleryButton: ImageButton
+    private lateinit var morePanel: LinearLayout
+    private lateinit var bottomControls: LinearLayout
+    private lateinit var topControls: LinearLayout
+    private lateinit var processingNotifier: ProcessingNotifier
 
     private lateinit var manager: CameraManager
     private val cameraThread = HandlerThread("SARI-Camera", android.os.Process.THREAD_PRIORITY_DISPLAY)
@@ -92,10 +97,13 @@ class MainActivity : ComponentActivity() {
     private var hasFocusPoint = false
     private var lastResult: TotalCaptureResult? = null
     private var pendingRawSave = false
+    private var waitingForAstroRawBeforeNextFrame = false
 
     private lateinit var controller: MemoryThermalController
     private lateinit var ai: AiEngine
     private val captureBusy = AtomicBoolean(false)
+    private var captureStartedAt = 0L
+    private val captureWatchdog = Runnable { onCaptureWatchdog() }
 
     private var burstMode = false
     private var burstType = ""
@@ -132,9 +140,13 @@ class MainActivity : ComponentActivity() {
         if (cameraOk && storageOk && preview.isAvailable) openCamera()
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.setDecorFitsSystemWindows(this, false)
         setContentView(R.layout.activity_main)
 
         preview = findViewById(R.id.preview)
@@ -148,7 +160,13 @@ class MainActivity : ComponentActivity() {
         zoomBar = findViewById(R.id.zoomBar)
         flashButton = findViewById(R.id.flashButton)
         switchCameraButton = findViewById(R.id.switchCamera)
+        galleryButton = findViewById(R.id.gallery)
+        morePanel = findViewById(R.id.morePanel)
+        bottomControls = findViewById(R.id.bottomControls)
+        topControls = findViewById(R.id.topControls)
+        processingNotifier = ProcessingNotifier(this)
 
+        applySystemInsets()
         manager = getSystemService(CameraManager::class.java)
         controller = MemoryThermalController(this)
         ai = AiEngine(this)
@@ -167,18 +185,7 @@ class MainActivity : ComponentActivity() {
                 if (hasCameraPermission()) openCamera()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
-            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-                session?.close()
-                session = null
-
-                previewSurface?.release()
-                previewSurface = null
-
-                device?.close()
-                device = null
-
-                return true
-            }
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = true
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
 
@@ -186,6 +193,9 @@ class MainActivity : ComponentActivity() {
             getSystemService(PowerManager::class.java).addThermalStatusListener(mainExecutor, thermalListener)
         }
         if (!hasCameraPermission()) permissionLauncher.launch(requiredPermissions())
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     private fun requiredPermissions(): Array<String> = if (Build.VERSION.SDK_INT <= 28) {
@@ -195,7 +205,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupControls() {
-        findViewById<ImageButton>(R.id.gallery).setOnClickListener {
+        galleryButton.setOnClickListener {
             startActivity(android.content.Intent(this, GalleryActivity::class.java))
         }
         findViewById<ImageButton>(R.id.settings).setOnClickListener {
@@ -224,53 +234,25 @@ class MainActivity : ComponentActivity() {
 
     private fun loadAiAsync() {
         Thread {
-            val aiEnabled = getSharedPreferences("settings", 0)
-                .getBoolean("ai", true)
-
             try {
-                if (aiEnabled) {
-                    val dir = File(filesDir, "models").apply { mkdirs() }
-
-                    copyAssetIfPresent(
-                        "real_esrgan_x2.onnx",
-                        File(dir, "real_esrgan_x2.onnx")
-                    )
-
-                    copyAssetIfPresent(
-                        "deblurring_nafnet_2025may.onnx",
-                        File(dir, "deblurring_nafnet_2025may.onnx")
-                    )
-
-                    copyAssetIfPresent(
-                        "realesrgan-x4plus.param",
-                        File(dir, "realesrgan-x4plus.param")
-                    )
-
-                    copyAssetIfPresent(
-                        "realesrgan-x4plus.bin",
-                        File(dir, "realesrgan-x4plus.bin")
-                    )
-
-                    ai.loadModels(
-                        File(dir, "real_esrgan_x2.onnx"),
-                        File(dir, "deblurring_nafnet_2025may.onnx"),
-                        File(dir, "realesrgan-x4plus.param"),
-                        File(dir, "realesrgan-x4plus.bin")
-                    )
-                }
-            } catch (_: Throwable) {
-            }
-
+                val dir = File(filesDir, "models").apply { mkdirs() }
+                copyAssetIfPresent("real_esrgan_x2.onnx", File(dir, "real_esrgan_x2.onnx"))
+                copyAssetIfPresent("deblurring_nafnet_2025may.onnx", File(dir, "deblurring_nafnet_2025may.onnx"))
+                copyAssetIfPresent("realesrgan-x4plus.param", File(dir, "realesrgan-x4plus.param"))
+                copyAssetIfPresent("realesrgan-x4plus.bin", File(dir, "realesrgan-x4plus.bin"))
+                ai.loadModels(
+                    File(dir, "real_esrgan_x2.onnx"),
+                    File(dir, "deblurring_nafnet_2025may.onnx"),
+                    File(dir, "realesrgan-x4plus.param"),
+                    File(dir, "realesrgan-x4plus.bin")
+                )
+            } catch (_: Throwable) { }
             runOnUiThread {
-                thermalText.text = if (!aiEnabled) {
-                    "AI • OFF"
-                } else {
-                    when {
-                        ai.ncnnAvailable && ai.ncnnVulkanAvailable -> "AI • VULKAN"
-                        ai.ncnnAvailable -> "AI • NCNN CPU"
-                        ai.superResolutionAvailable || ai.deblurAvailable -> "AI • ONNX"
-                        else -> "AI • FALLBACK"
-                    }
+                thermalText.text = when {
+                    ai.ncnnAvailable && ai.ncnnVulkanAvailable -> "AI • VULKAN"
+                    ai.ncnnAvailable -> "AI • NCNN CPU"
+                    ai.superResolutionAvailable || ai.deblurAvailable -> "AI • ONNX"
+                    else -> "AI • FALLBACK"
                 }
             }
         }.start()
@@ -285,19 +267,53 @@ class MainActivity : ComponentActivity() {
 
     private fun setupModes() {
         modeBar.removeAllViews()
-        listOf("PHOTO", "NIGHT", "ASTRO", "PRO", "RAW", "VIDEO").forEach { label ->
+        listOf("MORE", "PHOTO", "VIDEO").forEach { label ->
+            val v = TextView(this).apply {
+                text = label
+                textSize = 13f
+                gravity = android.view.Gravity.CENTER
+                setPadding(dp(20), 0, dp(20), 0)
+                isSingleLine = true
+                setOnClickListener {
+                    if (label == "MORE") toggleMorePanel() else selectMode(label)
+                }
+                tag = label
+                layoutParams = LinearLayout.LayoutParams(-2, dp(46))
+            }
+            modeBar.addView(v)
+        }
+        buildMorePanel()
+        updateModeUi()
+    }
+
+    private fun buildMorePanel() {
+        val rows = listOf(findViewById<LinearLayout>(R.id.moreRow1), findViewById<LinearLayout>(R.id.moreRow2))
+        rows.forEach { it.removeAllViews() }
+        listOf("NIGHT", "ASTRO", "PRO", "RAW").forEachIndexed { index, label ->
+            val row = rows[index / 2]
             val v = TextView(this).apply {
                 text = label
                 textSize = 12f
                 gravity = android.view.Gravity.CENTER
-                setPadding(dp(14), 0, dp(14), 0)
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.sari_white))
+                background = rounded(false)
+                setPadding(dp(18), 0, dp(18), 0)
                 isSingleLine = true
-                setOnClickListener { selectMode(label) }
                 tag = label
-                layoutParams = LinearLayout.LayoutParams(-2, dp(42))
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(dp(4), dp(4), dp(4), dp(4))
+                }
+                setOnClickListener {
+                    morePanel.visibility = View.GONE
+                    selectMode(label)
+                }
             }
-            modeBar.addView(v)
+            row.addView(v)
         }
+    }
+
+    private fun toggleMorePanel() {
+        morePanel.visibility = if (morePanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         updateModeUi()
     }
 
@@ -318,6 +334,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun selectMode(label: String) {
+        morePanel.visibility = View.GONE
         if (videoRecording && label != "VIDEO") stopVideo()
         mode = label
         burstMode = false
@@ -345,9 +362,9 @@ class MainActivity : ComponentActivity() {
     private fun updateModeUi() {
         for (i in 0 until modeBar.childCount) {
             val v = modeBar.getChildAt(i) as TextView
-            val selected = v.tag == mode
+            val selected = (v.tag == mode) || (v.tag == "MORE" && morePanel.visibility == View.VISIBLE)
             v.setTextColor(if (selected) ContextCompat.getColor(this, R.color.sari_gold) else ContextCompat.getColor(this, R.color.sari_white))
-            v.alpha = if (selected) 1f else 0.66f
+            v.alpha = if (selected) 1f else 0.70f
         }
     }
 
@@ -505,7 +522,7 @@ class MainActivity : ComponentActivity() {
         val texture = preview.surfaceTexture ?: return
         try {
             val req = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(previewSurface ?: return@apply)
+                addTarget(Surface(texture))
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(true))
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
@@ -659,11 +676,10 @@ class MainActivity : ComponentActivity() {
         burstZoom = currentZoom
         burstMode = true
         val b = controller.budget()
-        burstTotal = if (astro) {
-            b.maxFrames.coerceIn(3, 5)
-        } else {
-            b.maxFrames.coerceIn(3, 5)
-        }
+        // Keep the number of frames bounded by the same memory budget used by the
+        // stacking stage; the selected Astro duration is used to spread these frames
+        // across the full session rather than storing dozens of full JPEGs.
+        burstTotal = b.maxFrames.coerceIn(4, 10)
         burstRemaining = burstTotal
         astroRawSaved = false
         astroDeadline = if (astro) SystemClock.uptimeMillis() + astroDurationMs() else 0L
@@ -677,6 +693,9 @@ class MainActivity : ComponentActivity() {
         val d = device ?: return
         val j = jpegReader ?: return
         if (!captureBusy.compareAndSet(false, true)) return
+        captureStartedAt = SystemClock.uptimeMillis()
+        handler.removeCallbacks(captureWatchdog)
+        handler.postDelayed(captureWatchdog, if (mode == "ASTRO") 15000L else 8000L)
 
         val isBurst = burstMode
         val rawEnabled = getSharedPreferences("settings", 0).getBoolean("raw", true)
@@ -690,7 +709,7 @@ class MainActivity : ComponentActivity() {
                 addTarget(j.surface)
                 if (captureRaw) rawReader?.let { addTarget(it.surface) }
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(false))
+                set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode(true))
                 set(CaptureRequest.CONTROL_AE_MODE, when {
                     flashMode == FLASH_AUTO && capabilitiesForCurrent().flash -> CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH
                     flashMode == FLASH_ON && capabilitiesForCurrent().flash -> CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH
@@ -712,11 +731,18 @@ class MainActivity : ComponentActivity() {
                 }
                 override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
                     captureBusy.set(false)
+                    captureStartedAt = 0L
+                    handler.removeCallbacks(captureWatchdog)
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Capture failed: ${failure.reason}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }, handler)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
             captureBusy.set(false)
-            Toast.makeText(this, "Capture failed", Toast.LENGTH_SHORT).show()
+            captureStartedAt = 0L
+            handler.removeCallbacks(captureWatchdog)
+            Toast.makeText(this, "Capture failed: ${e.message ?: "unknown"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -741,19 +767,25 @@ class MainActivity : ComponentActivity() {
         builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
         builder.set(CaptureRequest.SENSOR_SENSITIVITY, safeIso)
         builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, safeExposure)
-
-        val minFocus =
-            c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
-
-        if (minFocus > 0f) {
-            builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
-        }
-
+        builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
         builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+    }
+
+    private fun onCaptureWatchdog() {
+        if (!captureBusy.get()) return
+        if (captureStartedAt == 0L || SystemClock.uptimeMillis() - captureStartedAt < 8000L) return
+        captureBusy.set(false)
+        captureStartedAt = 0L
+        runOnUiThread {
+            Toast.makeText(this, "Capture timed out — camera did not return a JPEG", Toast.LENGTH_LONG).show()
+        }
+        updatePreviewRepeating()
     }
 
     private fun onJpeg(image: Image) {
         try {
+            handler.removeCallbacks(captureWatchdog)
+            captureStartedAt = 0L
             val buffer = image.planes[0].buffer
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
@@ -771,19 +803,24 @@ class MainActivity : ComponentActivity() {
                     val kind = burstType
                     val zoom = burstZoom
                     burstMode = false
+                    waitingForAstroRawBeforeNextFrame = false
                     val files = burstFiles.toList()
                     burstFiles.clear()
                     processBurst(files, isAstro, zoom, kind)
-                } else {
-                    val delay = when (burstType) {
-                        "ASTRO" -> {
-                            val remainingTime = (astroDeadline - SystemClock.uptimeMillis()).coerceAtLeast(1000L)
-                            (remainingTime / (burstRemaining + 1)).coerceIn(3500L, 45_000L)
+                } else if (burstType == "ASTRO" && pendingRawSave && !astroRawSaved) {
+                    // JPEG can arrive before RAW. Wait so the next capture cannot overwrite
+                    // lastResult before DngCreator writes the first Astro RAW.
+                    waitingForAstroRawBeforeNextFrame = true
+                    // RAW delivery is asynchronous. Never let a missing RAW callback stall
+                    // the entire Astro sequence forever. Four-second exposure is the normal
+                    // ceiling; this six-second guard only breaks the wait, it does not create a DNG.
+                    handler.postDelayed({
+                        if (waitingForAstroRawBeforeNextFrame && burstMode) {
+                            continueBurstAfterAstroRaw()
                         }
-                        "ZOOM" -> 90L
-                        else -> 240L
-                    }
-                    handler.postDelayed({ captureSingle() }, delay)
+                    }, 6000L)
+                } else {
+                    scheduleNextBurstFrame()
                 }
             } else {
                 captureBusy.set(false)
@@ -794,6 +831,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun continueBurstAfterAstroRaw() {
+        if (!waitingForAstroRawBeforeNextFrame) return
+        waitingForAstroRawBeforeNextFrame = false
+        pendingRawSave = false
+        if (burstMode) scheduleNextBurstFrame()
+    }
+
+    private fun scheduleNextBurstFrame() {
+        if (!burstMode) return
+        val delay = when (burstType) {
+            "ASTRO" -> {
+                val remainingTime = (astroDeadline - SystemClock.uptimeMillis()).coerceAtLeast(1000L)
+                (remainingTime / (burstRemaining + 1)).coerceIn(3500L, 45_000L)
+            }
+            "ZOOM" -> 90L
+            else -> 240L
+        }
+        handler.postDelayed({ captureSingle() }, delay)
+    }
+
     private fun onRaw(image: Image) {
         try {
             val result = lastResult
@@ -801,6 +858,7 @@ class MainActivity : ComponentActivity() {
             val shouldSave = rawEnabled && pendingRawSave
             if (!shouldSave || result == null) {
                 pendingRawSave = false
+                continueBurstAfterAstroRaw()
                 return
             }
 
@@ -811,17 +869,23 @@ class MainActivity : ComponentActivity() {
                     put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SARI Camera/RAW")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
-                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri == null) {
+                    pendingRawSave = false
+                    continueBurstAfterAstroRaw()
+                    return
+                }
                 try {
                     contentResolver.openOutputStream(uri)?.use { out ->
                         android.hardware.camera2.DngCreator(characteristics!!, result).use { creator -> creator.writeImage(out, image) }
                     }
                     contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-                    if (mode == "ASTRO") astroRawSaved = true
+                        if (mode == "ASTRO") astroRawSaved = true
                 } catch (_: Throwable) {
                     contentResolver.delete(uri, null, null)
                 }
                 pendingRawSave = false
+                continueBurstAfterAstroRaw()
             } else {
                 val dir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "SARI Camera/RAW").apply { mkdirs() }
                 val file = File(dir, "SARI_${System.currentTimeMillis()}.dng")
@@ -833,13 +897,14 @@ class MainActivity : ComponentActivity() {
                     if (mode == "ASTRO") astroRawSaved = true
                 } catch (_: Throwable) { file.delete() }
                 pendingRawSave = false
+                continueBurstAfterAstroRaw()
             }
         } finally {
             image.close()
         }
     }
 
-    private fun saveJpegBytes(bytes: ByteArray, astro: Boolean) {
+    private fun saveJpegBytes(bytes: ByteArray, astro: Boolean): Boolean {
         val name = "SARI_ORIGINAL_${System.currentTimeMillis()}.jpg"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
@@ -849,49 +914,66 @@ class MainActivity : ComponentActivity() {
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= 29) {
-                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
                 try {
-                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    val stream = contentResolver.openOutputStream(uri) ?: throw IllegalStateException("Gallery stream unavailable")
+                    stream.use { it.write(bytes) }
                     contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-                } catch (_: Throwable) { contentResolver.delete(uri, null, null) }
+                    true
+                } catch (_: Throwable) {
+                    contentResolver.delete(uri, null, null)
+                    false
+                }
             } else {
                 val dir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), if (astro) "SARI Camera/Astro" else "SARI Camera")
                 dir.mkdirs()
                 val file = File(dir, name)
                 file.outputStream().use { it.write(bytes) }
                 android.media.MediaScannerConnection.scanFile(this, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+                true
             }
-        } catch (_: Throwable) { }
+        } catch (_: Throwable) { false }
     }
 
     private fun processLatest(bytes: ByteArray, zoom: Float) {
+        val title = if (zoom >= 13f) "AI RECONSTRUCTION" else if (zoom >= 6f) "AI SUPER RES" else "IMAGE ENGINE"
         processingExecutor.execute {
+            var fallbackSaved = false
+            var finalSaved = false
             try {
-                runOnUiThread { showProcessing("Processing • ${if (zoom >= 13f) "AI RECONSTRUCTION" else if (zoom >= 6f) "AI SUPER RES" else "IMAGE ENGINE"}", 0) }
+                startProcessing(title)
                 val budget = controller.budget()
-                val decoded = decodeOriented(bytes, budget.imageMaxDimension) ?: return@execute
+                val decoded = decodeOriented(bytes, budget.imageMaxDimension) ?: throw IllegalStateException("JPEG decode failed")
+                runOnUiThread { showProcessing(title, 8) }
                 val bitmap = applySoftwareCrop(decoded, zoom)
                 if (bitmap !== decoded) decoded.recycle()
                 val focus = if (hasFocusPoint && zoom >= 6f) focusRoi(bitmap, zoom) else null
                 val faces = FaceProtection.detect(bitmap)
-                val aiEnabled = getSharedPreferences("settings", 0)
-                    .getBoolean("ai", true)
-
-                val processor =
-                    TileProcessor(if (aiEnabled) ai else null, controller)
+                val processor = TileProcessor(ai, controller)
                 val enhanced = processor.processZoom(bitmap, zoom, focus, faces) { progress ->
-                    runOnUiThread { showProcessing("Processing • $progress%", progress) }
+                    val mapped = 8 + (progress * 0.87f).toInt()
+                    runOnUiThread { showProcessing(title, mapped) }
                 }
                 if (getSharedPreferences("settings", 0).getBoolean("saveOriginal", false)) {
-                    saveJpegBytes(bytes, false)
+                    fallbackSaved = saveJpegBytes(bytes, false)
                 }
-                ImageSaver.saveJpeg(this, enhanced, false)
+                val saved = ImageSaver.saveJpeg(this, enhanced, false)
+                if (saved == null) throw IllegalStateException("Gallery save failed")
+                finalSaved = true
                 enhanced.recycle()
                 bitmap.recycle()
+                runOnUiThread { showProcessing(title, 100) }
+                finishProcessing(title, true)
             } catch (e: Throwable) {
-                runOnUiThread { Toast.makeText(this, "Processing fallback: ${e.message ?: "unknown"}", Toast.LENGTH_SHORT).show() }
+                if (!finalSaved && !fallbackSaved) {
+                    try {
+                        fallbackSaved = saveJpegBytes(bytes, false)
+                    } catch (_: Throwable) { }
+                }
+                runOnUiThread { Toast.makeText(this, "Processing failed: ${e.message ?: "unknown"}. Original photo was saved when possible.", Toast.LENGTH_LONG).show() }
+                finishProcessing(title, false)
             } finally {
                 runOnUiThread { hideProcessing() }
             }
@@ -903,100 +985,58 @@ class MainActivity : ComponentActivity() {
             files.forEach(File::delete)
             return
         }
+        val title = when (kind) {
+            "ZOOM" -> "ZOOM • MULTI-FRAME ALIGN"
+            "ASTRO" -> "ASTRO • ALIGN + STACK"
+            else -> "NIGHT • ALIGN + STACK"
+        }
         processingExecutor.execute {
             val bitmaps = mutableListOf<Bitmap>()
             try {
-                runOnUiThread { showProcessing(when (kind) {
-                    "ZOOM" -> "ZOOM • MULTI-FRAME ALIGN"
-                    "ASTRO" -> "ASTRO • ALIGN + STACK"
-                    else -> "NIGHT • ALIGN + STACK"
-                }, 0) }
+                startProcessing(title)
                 val budget = controller.budget()
                 val stackMax = min(budget.imageMaxDimension, if (astro) 2048 else 2304)
-                for (file in files.take(budget.maxFrames)) {
+                val selectedFiles = files.take(budget.maxFrames)
+                for ((index, file) in selectedFiles.withIndex()) {
                     decodeOriented(file.readBytes(), stackMax)?.let { decoded ->
                         val cropped = applySoftwareCrop(decoded, zoom)
                         if (cropped !== decoded) decoded.recycle()
                         bitmaps.add(cropped)
                     }
+                    runOnUiThread { showProcessing(title, 5 + (((index + 1) * 20f) / selectedFiles.size.coerceAtLeast(1)).toInt()) }
                 }
-                if (bitmaps.size < 2) return@execute
+                if (bitmaps.size < 2) throw IllegalStateException("Not enough frames for stacking")
                 val targetW = bitmaps.minOf { it.width }
                 val targetH = bitmaps.minOf { it.height }
-
-                val normalized = mutableListOf<Bitmap>()
-
-                for (bitmap in bitmaps) {
-                    val normalizedBitmap =
-                        if (bitmap.width == targetW && bitmap.height == targetH) {
-                            bitmap
-                        } else {
-                            Bitmap.createScaledBitmap(
-                                bitmap,
-                                targetW,
-                                targetH,
-                                true
-                            ).also {
-                                if (!bitmap.isRecycled) bitmap.recycle()
-                            }
-                        }
-
-                    normalized.add(normalizedBitmap)
+                val normalized = bitmaps.map { if (it.width == targetW && it.height == targetH) it else Bitmap.createScaledBitmap(it, targetW, targetH, true) }
+                val buffers = normalized.map { bitmap ->
+                    ByteBuffer.allocateDirect(bitmap.byteCount).also { b -> bitmap.copyPixelsToBuffer(b); b.rewind() }
                 }
-
-                bitmaps.clear()
-
-                // Copy to the bounded native input buffers, then immediately release
-                // Java Bitmap instances before OpenCV creates its aligned copies.
-                val buffers = ArrayList<ByteBuffer>(normalized.size)
-
-                for (bitmap in normalized) {
-                    val buffer = ByteBuffer.allocateDirect(bitmap.byteCount)
-                    bitmap.copyPixelsToBuffer(buffer)
-                    buffer.rewind()
-                    buffers.add(buffer)
-
-                    if (!bitmap.isRecycled) bitmap.recycle()
-                }
-
-                normalized.clear()
-
                 val out = ByteBuffer.allocateDirect(targetW * targetH * 4)
+                runOnUiThread { showProcessing(title, 35) }
                 val aligned = NativeEngine.alignAndStackRGBA(buffers.toTypedArray(), out, targetW, targetH, if (astro) 2.2f else 2.6f)
-                if (aligned >= 2) {
-                    out.rewind()
-                    val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-                    result.copyPixelsFromBuffer(out)
-                    val faces = FaceProtection.detect(result)
-                    val focus = if (hasFocusPoint && zoom >= 6f) focusRoi(result, zoom) else null
-                    val aiEnabled = getSharedPreferences("settings", 0)
-                        .getBoolean("ai", true)
-
-                    val enhanced =
-                        TileProcessor(if (aiEnabled) ai else null, controller)
-                            .processZoom(result, zoom, focus, faces) { p ->
-                        val label = when (kind) { "ZOOM" -> "ZOOM"; "ASTRO" -> "ASTRO"; else -> "NIGHT" }
-                        runOnUiThread { showProcessing("$label • $p%", p) }
-                    }
-                    ImageSaver.saveJpeg(this, enhanced, astro)
-                    enhanced.recycle()
-                    result.recycle()
+                if (aligned < 2) throw IllegalStateException("Frame alignment failed ($aligned frames aligned)")
+                out.rewind()
+                val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                result.copyPixelsFromBuffer(out)
+                val faces = FaceProtection.detect(result)
+                val focus = if (hasFocusPoint && zoom >= 6f) focusRoi(result, zoom) else null
+                val enhanced = TileProcessor(ai, controller).processZoom(result, zoom, focus, faces) { p ->
+                    val mapped = 35 + (p * 0.60f).toInt()
+                    runOnUiThread { showProcessing(title, mapped) }
                 }
-                buffers.forEach { it.rewind() }
+                runOnUiThread { showProcessing(title, 97) }
+                val saved = ImageSaver.saveJpeg(this, enhanced, astro)
+                if (saved == null) throw IllegalStateException("Gallery save failed")
+                enhanced.recycle()
+                result.recycle()
+                normalized.forEach { if (it !in bitmaps) it.recycle() }
+                bitmaps.forEach { it.recycle() }
+                finishProcessing(title, true)
             } catch (e: Throwable) {
-                bitmaps.forEach {
-                    try {
-                        if (!it.isRecycled) it.recycle()
-                    } catch (_: Throwable) {}
-                }
-
-                runOnUiThread {
-                    Toast.makeText(
-                        this,
-                        "Stack fallback: ${e.message ?: "unknown"}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+                bitmaps.forEach { try { it.recycle() } catch (_: Throwable) {} }
+                runOnUiThread { Toast.makeText(this, "Stack failed: ${e.message ?: "unknown"}", Toast.LENGTH_LONG).show() }
+                finishProcessing(title, false)
             } finally {
                 files.forEach(File::delete)
                 runOnUiThread {
@@ -1055,8 +1095,11 @@ class MainActivity : ComponentActivity() {
         val size = if (zoom >= 13f) 0.28f else 0.42f
         val w = bitmap.width * size
         val h = bitmap.height * size
-        val cx = bitmap.width * lastTapX
-        val cy = bitmap.height * lastTapY
+        // The camera crop and software crop are both centered on the tapped subject.
+        // Therefore, after decoding the cropped JPEG, the requested target is at the
+        // processed bitmap center rather than still at its original preview coordinates.
+        val cx = if (hasFocusPoint) bitmap.width / 2f else bitmap.width * 0.5f
+        val cy = if (hasFocusPoint) bitmap.height / 2f else bitmap.height * 0.5f
         return RectF(
             (cx - w / 2f).coerceIn(0f, bitmap.width - w),
             (cy - h / 2f).coerceIn(0f, bitmap.height - h),
@@ -1202,12 +1245,51 @@ class MainActivity : ComponentActivity() {
 
     private fun showProcessing(text: String, progress: Int) {
         processingText.visibility = View.VISIBLE
-        processingText.text = text
+        processingText.text = if (progress in 0..100) "$text • $progress%" else text
         processingText.alpha = 1f
+        processingNotifier.update(text, progress.coerceIn(0, 100))
+    }
+
+    private fun startProcessing(title: String) {
+        processingNotifier.start(title)
+        runOnUiThread { showProcessing(title, 0) }
+    }
+
+    private fun finishProcessing(title: String, success: Boolean) {
+        processingNotifier.finish(title, success)
+        runOnUiThread {
+            if (success) {
+                processingText.visibility = View.VISIBLE
+                processingText.alpha = 1f
+                processingText.text = "$title • DONE • 100%"
+                handler.postDelayed({ hideProcessing() }, 900L)
+            } else {
+                hideProcessing()
+            }
+        }
     }
 
     private fun hideProcessing() {
         processingText.animate().alpha(0f).setDuration(220).withEndAction { processingText.visibility = View.GONE }.start()
+    }
+
+    private fun applySystemInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(topControls) { view, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(view.paddingLeft, bars.top + dp(8), view.paddingRight, dp(8))
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bottomControls) { view, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(view.paddingLeft, dp(2), view.paddingRight, bars.bottom + dp(4))
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(modeBar) { _, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            morePanel.translationY = -(bars.bottom * 0.0f)
+            insets
+        }
+        ViewCompat.requestApplyInsets(findViewById(R.id.root))
     }
 
     private fun rounded(selected: Boolean): android.graphics.drawable.Drawable = android.graphics.drawable.GradientDrawable().apply {
